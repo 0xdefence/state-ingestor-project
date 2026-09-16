@@ -1,0 +1,67 @@
+<h2>Proposed workspace and review model</h2>
+<p class="subtitle">A GitHub Actions-inspired operations view: summary first, expandable pipeline context, queue and detail kept together.</p>
+
+<div class="mockup">
+  <div class="mockup-header">Workspace overview</div>
+  <div class="mockup-body" style="font-family:ui-sans-serif,system-ui;color:#18202b">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:18px">
+      <div><strong style="font-size:20px">Data operations</strong><div style="font-size:12px;color:#667085;margin-top:4px">What needs attention across recent imports</div></div>
+      <button class="mock-button">Import CSV</button>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:18px">
+      <div style="border:1px solid #f1c5c5;border-left:4px solid #c43d3d;padding:12px;background:#fffafa"><div style="font-size:11px;color:#7a3333">FAILED RUNS</div><strong style="font-size:22px">1</strong></div>
+      <div style="border:1px solid #ecd79d;border-left:4px solid #b47a0a;padding:12px;background:#fffdf5"><div style="font-size:11px;color:#76540e">REQUIRES REVIEW</div><strong style="font-size:22px">8</strong></div>
+      <div style="border:1px solid #b8d8c4;border-left:4px solid #2b7a4b;padding:12px;background:#f8fdf9"><div style="font-size:11px;color:#285b3b">STAGED</div><strong style="font-size:22px">11</strong></div>
+      <div style="border:1px solid #ccd5df;border-left:4px solid #526273;padding:12px;background:#fbfcfd"><div style="font-size:11px;color:#526273">REJECTED</div><strong style="font-size:22px">2</strong></div>
+    </div>
+    <div style="display:grid;grid-template-columns:1.35fr .65fr;gap:14px">
+      <div style="border:1px solid #d8dee6;border-radius:6px;overflow:hidden">
+        <div style="padding:10px 12px;background:#f6f8fa;border-bottom:1px solid #d8dee6;font-weight:650">Outstanding review</div>
+        <div style="padding:10px 12px;border-bottom:1px solid #edf0f3"><strong>Stock value needs clarification</strong><div style="font-size:12px;color:#667085">SKU-2003 · line 9 · unresolved</div></div>
+        <div style="padding:10px 12px;border-bottom:1px solid #edf0f3"><strong>Existing record has different values</strong><div style="font-size:12px;color:#667085">CUST-1001 · conflict</div></div>
+        <div style="padding:10px 12px"><strong>Order blocked by customer review</strong><div style="font-size:12px;color:#667085">ORD-3003 · dependency</div></div>
+      </div>
+      <div style="border:1px solid #d8dee6;border-radius:6px;padding:12px"><strong>Recent runs</strong><div style="margin-top:10px;font-size:12px"><div style="padding:8px 0;border-bottom:1px solid #edf0f3">messy_sample_data.csv<br><span style="color:#b47a0a">8 need review</span></div><div style="padding:8px 0">suppliers-sept.csv<br><span style="color:#c43d3d">Parse failed</span></div></div></div>
+    </div>
+  </div>
+</div>
+
+<div class="mockup" style="margin-top:24px">
+  <div class="mockup-header">Review queue</div>
+  <div class="mockup-body" style="font-family:ui-sans-serif,system-ui;color:#18202b">
+    <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">
+      <span style="padding:6px 9px;border-radius:5px;background:#18202b;color:white;font-size:12px">Needs attention 8</span>
+      <span style="padding:6px 9px;border:1px solid #ccd5df;border-radius:5px;font-size:12px">In progress 2</span>
+      <span style="padding:6px 9px;border:1px solid #ccd5df;border-radius:5px;font-size:12px">Awaiting decision 3</span>
+      <span style="padding:6px 9px;border:1px solid #ccd5df;border-radius:5px;font-size:12px">Completed 11</span>
+      <span style="padding:6px 9px;border:1px solid #ccd5df;border-radius:5px;font-size:12px">Rejected 2</span>
+    </div>
+    <div style="display:grid;grid-template-columns:310px 1fr;border:1px solid #d8dee6;border-radius:6px;min-height:365px;overflow:hidden">
+      <div style="border-right:1px solid #d8dee6;background:#fbfcfd">
+        <div style="padding:10px;border-bottom:1px solid #d8dee6"><input class="mock-input" placeholder="Filter review items" style="width:100%;box-sizing:border-box"></div>
+        <div style="padding:12px;background:#eef4fb;border-left:3px solid #2f6feb;border-bottom:1px solid #d8dee6"><strong>SKU-2003</strong><div style="font-size:12px;color:#526273;margin-top:3px">Stock value needs clarification</div><div style="font-size:11px;color:#8a6412;margin-top:6px">Needs attention · Normalise</div></div>
+        <div style="padding:12px;border-bottom:1px solid #e8ebef"><strong>CUST-1001</strong><div style="font-size:12px;color:#526273;margin-top:3px">Values conflict with existing record</div><div style="font-size:11px;color:#8a6412;margin-top:6px">Needs attention · Classify</div></div>
+        <div style="padding:12px"><strong>ORD-3003</strong><div style="font-size:12px;color:#526273;margin-top:3px">Waiting for customer resolution</div><div style="font-size:11px;color:#7254a3;margin-top:6px">Blocked · Load</div></div>
+      </div>
+      <div style="padding:16px">
+        <div style="display:flex;justify-content:space-between"><div><span style="font-size:11px;color:#8a6412;font-weight:700">NEEDS ATTENTION</span><h3 style="margin:4px 0">Stock quantity cannot be understood</h3><div style="font-size:12px;color:#667085">Product SKU-2003 · source line 9</div></div><span style="font-size:12px;color:#526273">Normalise stage</span></div>
+        <div style="margin:16px 0;padding:12px;background:#fff8e7;border:1px solid #ead49c;border-radius:5px"><strong>Why this was flagged</strong><div style="font-size:13px;margin-top:5px">The source says “many”, but stock quantity must be a number. This may be an informal placeholder.</div></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+          <div style="border:1px solid #d8dee6;border-radius:5px;padding:12px"><div style="font-size:11px;color:#667085">SOURCE VALUE</div><strong>many</strong></div>
+          <div style="border:1px solid #d8dee6;border-radius:5px;padding:12px"><div style="font-size:11px;color:#667085">INTERPRETED VALUE</div><strong>Unresolved</strong></div>
+        </div>
+        <div style="margin-top:14px;border-top:1px solid #e8ebef;padding-top:12px"><strong style="font-size:13px">Pipeline context</strong><div style="display:flex;gap:6px;margin-top:9px;font-size:11px"><span style="padding:5px 7px;background:#eaf6ee;color:#28613c;border-radius:4px">Ingest ✓</span><span style="padding:5px 7px;background:#eaf6ee;color:#28613c;border-radius:4px">Parse ✓</span><span style="padding:5px 7px;background:#fff1cc;color:#79570d;border-radius:4px">Normalise !</span><span style="padding:5px 7px;background:#f0f2f5;color:#7a8490;border-radius:4px">Classify</span><span style="padding:5px 7px;background:#f0f2f5;color:#7a8490;border-radius:4px">Stage</span></div></div>
+        <details style="margin-top:14px"><summary style="font-size:12px;color:#526273;cursor:pointer">Technical evidence and rule details</summary><div style="font-size:12px;margin-top:8px;color:#667085">Issue: INVALID_INTEGER · candidate revision 01 · raw record 09</div></details>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section" style="margin-top:22px">
+  <h3>Proposed state language</h3>
+  <p class="subtitle">User-facing labels are plain language; internal states remain visible in technical details.</p>
+  <div class="options" data-multiselect>
+    <div class="option" data-choice="state-model" onclick="toggleSelect(this)"><div class="letter">✓</div><div class="content"><h3>Two state axes</h3><p>Pipeline position and review outcome stay separate, so “where processing stopped” is never confused with “what a reviewer decided.”</p></div></div>
+    <div class="option" data-choice="breakdown" onclick="toggleSelect(this)"><div class="letter">✓</div><div class="content"><h3>Clickable breakdown</h3><p>Every overview count opens the queue with that exact filter applied.</p></div></div>
+  </div>
+</div>

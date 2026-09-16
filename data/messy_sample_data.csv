@@ -1,0 +1,54 @@
+﻿record_type,id,name,contact_or_sku,value,quantity,date,status,tags,notes
+CUSTOMER,CUST-1001,John Smith,john.smith@example.com,"$1,240.50",,2023-05-12,Active,vip|newsletter,"Prefers email contact, calls only after 5pm"
+PRODUCT,SKU-2001,Wireless Mouse,Electronics,19.99,150,2022-11-01,in_stock,electronics|accessories,Standard 2.4GHz wireless mouse
+ORDER,ORD-3001,John Smith,SKU-2001,19.99,2,2024-01-15,shipped,,Leave at front door
+CUSTOMER,CUST-1002,Mary O'Brien,mary.obrien@example.co.uk,890.00,,01/22/2023,ACTIVE,N/A,"Signed up via referral from CUST-1001"
+PRODUCT,SKU-2002,Bluetooth Keyboard - DE Layout,Electronics,"45,00",0,2023-03-08,discontinued,electronics,Only sold in EU region
+ORDER,ORD-3002,Mary O'Brien,SKU-2002,45.00,-1,2023-04-02,refunded,,"Customer said ""arrived damaged"", refund issued"
+CUSTOMER,CUST-1003,François Dupont,f.dupont@example.fr,"€2.345,00",,15-Jan-2024,inactive,vip,"Prefers phone calls, evenings only"
+PRODUCT,SKU-2003,Limited Edition Charger,Electronics,TBD,many,,pending_review,limited|new,Pricing not finalized yet
+ORDER,ORD-3003,François Dupont,SKU-2001,"$39.98",2,2024/02/03 14:22:00,shipped,express,Gift wrap requested
+CUSTOMER,CUST-1004,Ravi Patel,-,1.5e3,,2021-07-30,Active,,Corporate account - high volume
+PRODUCT,SKU-00204,Desk Lamp,Home & Office,34.50,-12,2023-09-19,backordered,home|office,"Currently oversold, -12 units on backorder"
+ORDER,ORD-3004,Ravi Patel,SKU-00204,34.50,1,2024-03-11
+CUSTOMER,CUST-1005,Anna Kowalski,anna.k@example.pl,410.00,,2022-12-05,active,,Called twice, no answer, will retry next week
+PRODUCT,SKU-2005,Standing Desk Converter,Home & Office,189.99,8,2023-06-14,in_stock,home|office|ergonomic,"Adjustable height desk converter.
+Ships in 2 boxes. Assembly required."
+ORDER,ORD-3001,John Smith,SKU-2001,19.99,2,2024-01-15,shipped,,Leave at front door
+
+record_type,id,name,contact_or_sku,value,quantity,date,status,tags,notes
+CUSTOMER,CUST-1006,  Wei Zhang  ,wei.zhang@example.cn, 275.00 ,, 2023-08-01 ,Y,newsletter, Prefers SMS
+PRODUCT,SKU-2006,Ergonomic Mouse Pad,Accessories,"12.99 (10% off)",40,2024-04-22,in_stock,accessories,Seasonal promo pricing
+ORDER,ORD-3005,Wei Zhang,SKU-2006,NULL,None,2024-05-01,cancelled,,Customer cancelled before payment
+CUSTOMER,CUST-1007,Sofia Rossi 🌟,sofia.rossi@example.it,1050.25,,2023-02-18,ACTIVE,vip|loyalty,Top reviewer on community forum
+PRODUCT,SKU-2007,USB-C Hub,Electronics,29.99,60,2023-10-05,in_stock,electronics|accessories,7-in-1 hub,
+ORDER,ORD-3006,Sofia Rossi,SKU-2007,29.99,1,2024-06-30,pending,,Awaiting stock confirmation
+CUSTOMER,CUST-1008,Lars Müller,lars@example.de,2450,,2024-01-10T15:30:00Z,true,premium,Uses umlauts in name
+PRODUCT,SKU-2008,Mechanical Keyboard RGB,Electronics,149.99|with discount code,999,2024-03-15,,gaming|premium,Programmable keys - high demand
+ORDER,ORD-3007,Lars Müller,SKU-2008,149.99,3,3/15/24,in_transit,overnight,"Signature required. Value: £449.97"
+CUSTOMER,CUST-1009,李明,li.ming@example.cn,USD 1200.50,,01-02-2024,ACTIVE,vip,Chinese characters in name and contact
+PRODUCT,SKU-00209,Portable SSD 1TB,Storage,85.50|EUR 79.90,45,2024-02-20 09:15,in_stock,"storage|backup|fast"," Drive is currently backordered due to supply chain, ETA end of quarter"
+ORDER,ORD-3008,李明,SKU-00209,85.50,1,2024.04.10,processing,,,
+CUSTOMER,CUST-1010,Jose García-López,"jose@example.es, jose.backup@example.es",550.00,,15.3.2023,active,newsletter,"Has two emails, hyphenated surname"
+PRODUCT,SKU-2010,Monitor Stand,Office,47.00,0,2023-12-01,out_of_stock,office|supplies,
+ORDER,ORD-3009,Jose García-López,SKU-2010,0.00,2,2024-05-22 14:30:45.123,backorder,expedited,"Waiting for supplier confirmation"
+CUSTOMER,CUST-1011,"Johnson, Michael",michael.johnson@co.uk,"£759.99 (GBP)",,2023/12/15,Inactive,na,Left negative review
+PRODUCT,SKU-2011,Laptop Stand - Aluminum Pro,"Office, Electronics",199.99,5|in-stock,2024-01-05,in_stock,office|portable|aluminum,"Premium aluminum construction
+Heavy-duty, supports up to 25kg"
+ORDER,ORD-3010,Johnson Michael,SKU-2011,199.99,1,2024-07-01 +00:00,shipped,,Express shipping applied
+CUSTOMER,CUST-0012,Patricia Chen,n/a,,2022-09-30,PENDING,|vip|,"No valid contact info,status unclear"
+PRODUCT,SKU-2012,USB Cable Pack (5x),Accessories,"$8.99 x5=$44.95",-8,2024-04-10,discontinued,cables,"Return/exchange stock issue"
+ORDER,ORD-3011,Patricia Chen,SKU-2012,8.99,5,05/05/2024,returned,priority,"Customer satisfaction guarantee applied"
+CUSTOMER,CUST-1013,أحمد محمد,ahmad@example.sa,"3,500 SR",,2023.11.20,Active,premium|loyalty,Arabic name and currency (Saudi Riyal)
+PRODUCT,SKU-2013,"Webcam, 1080p, Auto-focus",Electronics,59.99,20,2024-05-11,in_stock,webcam|video,Comes with built-in microphone & mount
+ORDER,ORD-3012,Ahmad Mohammad,SKU-2013,59.99,1,2024-08-15T10:00:00,shipped,standard,No special notes
+
+CUSTOMER,CUST-1014,Yuki Tanaka,yuki.tanaka@example.jp,¥15000,,2023-05-05,active,vip,Japanese name - regular customer since 2022
+PRODUCT,SKU-2014,External HDD 2TB Portable,Storage,"$69.99 | €65.00",30,2024-03-20,in_stock,storage|portable|backup,"Fast USB 3.1, shock-resistant"
+ORDER,ORD-3013,Yuki Tanaka,SKU-2014,69.99,2,2024/07/20 11:22:33,awaiting_shipment,express,"Rush order, needs by weekend"
+CUSTOMER,CUST-1015,UNKNOWN USER,unknown@temp.email,-999,,unknown,unknown,,Suspicious account
+PRODUCT,SKU-2015,Power Bank 30000mAh,Electronics,49.99,0,2024-06-01,pre_order,gadgets|power|travel,"Coming soon, sign up for notifications"
+ORDER,ORD-3014,Unknown User,SKU-2015,49.99,10,,,,"Order status unknown, needs investigation"
+CUSTOMER,CUST-1016,Victoria del Mar,victoria.delmar@example.mx,"$2,340 MXN converted @ 17.5 = $133.71",,"2024-01-01",active,newsletter,Complex currency conversion noted
+PRODUCT,SKU-2016,Desk Organizer Set,Office,34.50,15,2023-10-10,in_stock,office|desk,Contains 5 compartments - comes unassembled
+ORDER,ORD-3015,Victoria Del Mar,SKU-2016,34.50,3,2024-09-01 13:45,completed,standard,"Same day processing, arrived next day"
