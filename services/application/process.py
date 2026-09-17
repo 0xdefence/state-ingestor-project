@@ -345,11 +345,11 @@ def process_run(
                 uow_factory,
                 NormaliseContext(clock),
             )
-        elif run.state in (RunState.NORMALISED, RunState.CLASSIFYING):
+        elif run.state is RunState.NORMALISED:
             classified = classify_run(
                 command.run_id, default_registry(), uow_factory(), clock
             )
-        elif run.state in (RunState.CLASSIFIED, RunState.LOADING):
+        elif run.state is RunState.CLASSIFIED:
             loaded = stage_run(command.run_id, uow_factory, clock)
         elif run.state is RunState.STAGED:
             return _persisted_result(
@@ -360,6 +360,8 @@ def process_run(
                 classified=classified,
                 loaded=loaded,
             )
+        elif run.state in (RunState.CLASSIFYING, RunState.LOADING):
+            raise ValueError(f"Run cannot be processed from {run.state}")
         else:
             raise ValueError(f"Run cannot be processed from {run.state}")
 

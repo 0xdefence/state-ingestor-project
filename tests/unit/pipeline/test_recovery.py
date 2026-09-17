@@ -161,8 +161,8 @@ def test_staged_run_is_a_no_write_replay(monkeypatch) -> None:
     [
         (RunState.PARSING, "parse_failed", ["parse", "normalise", "classify", "load"]),
         (RunState.NORMALISING, "normalise_failed", ["normalise", "classify", "load"]),
-        (RunState.CLASSIFYING, "classify_failed", ["classify", "load"]),
-        (RunState.LOADING, "load_failed", ["load"]),
+        (RunState.NORMALISED, "classify_failed", ["classify", "load"]),
+        (RunState.CLASSIFIED, "load_failed", ["load"]),
     ],
 )
 def test_retry_resumes_from_persisted_stage(
@@ -218,6 +218,37 @@ def test_retry_resumes_from_persisted_stage(
     assert calls == expected
     assert result.state is RunState.STAGED
     assert result.promoted_count == 31
+
+
+@pytest.mark.parametrize(
+    ("state", "failure"),
+    [
+        (RunState.CLASSIFYING, "classify_failed"),
+        (RunState.LOADING, "load_failed"),
+    ],
+)
+def test_retry_rejects_unsupported_transient_state(
+    monkeypatch, state: RunState, failure: str
+) -> None:
+    from services.application import process
+
+    store = OrchestrationStore(state, stage_failure=failure)
+    for name in ("parse_run", "normalise_run", "classify_run", "stage_run"):
+        monkeypatch.setattr(
+            process,
+            name,
+            lambda *_args, stage=name, **_kwargs: pytest.fail(
+                f"transient-state retry dispatched {stage}"
+            ),
+        )
+
+    with pytest.raises(
+        ValueError, match=f"Run cannot be processed from {state.value}"
+    ):
+        process.retry_run(
+            RetryRun(store.run_id, 10), store.uow, SimpleNamespace(), FixedClock()
+        )
+    assert store.commits == 0
 
 
 class MemoryLoad:
