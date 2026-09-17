@@ -21,6 +21,7 @@ from services.application.ports import (
 )
 from services.domain.raw import RawRecord
 from services.domain.runs import RunChainInvariantError, RunState
+from services.infrastructure.db.derived_codec import evidence_equal
 from services.infrastructure.db.derived_repositories import (
     SqlAlchemyCandidateRepository as SqlAlchemyCandidateRepository,
 )
@@ -197,6 +198,23 @@ class SqlAlchemyRunRepository:
 
     def link_occurrence(self, link: RunSourceOccurrence) -> None:
         self._session.add(RunSourceOccurrenceModel(**asdict(link)))
+
+    def complete_classification(
+        self, run_id: UUID, rules_version: str, counts: dict[str, int]
+    ) -> None:
+        row = self._session.get(RunModel, run_id)
+        if row is None:
+            raise LookupError(f"Unknown run: {run_id}")
+        if row.rules_version is not None and row.rules_version != rules_version:
+            raise ValueError(
+                "Classification rules identity mismatch; reprocess required"
+            )
+        if row.counts is not None and not evidence_equal(row.counts, counts):
+            raise ValueError("Classification counts identity mismatch")
+        row.rules_version = rules_version
+        row.counts = dict(counts)
+        row.state = RunState.CLASSIFIED
+        row.stage_failure = None
 
     def set_state(
         self, run_id: UUID, state: RunState, *, stage_failure: str | None = None

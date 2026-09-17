@@ -1,5 +1,7 @@
 """Narrow append-only derived repositories sharing their caller's session."""
 
+from dataclasses import replace
+from datetime import UTC
 from typing import cast
 from uuid import UUID
 
@@ -67,7 +69,7 @@ def _candidate(row: CandidateRevisionModel) -> CandidateRevision:
         row.parent_revision_id,
         row.origin,
         payload,
-        row.created_at,
+        row.created_at.astimezone(UTC),
     )
     if result.entity_type != row.entity_type:
         raise ValueError("stored revision entity type mismatch")
@@ -107,7 +109,7 @@ def _classification(row: ClassificationResultModel) -> ClassificationResult:
         row.fx_snapshot_id,
         Verdict(row.verdict),
         Readiness(row.readiness),
-        row.evaluated_at,
+        row.evaluated_at.astimezone(UTC),
     )
 
 
@@ -138,7 +140,7 @@ def _review(row: ReviewItemModel) -> ReviewItem:
         row.raw_record_id,
         row.classification_id,
         read_tuple(row.reasons, ReviewReason),
-        row.created_at,
+        row.created_at.astimezone(UTC),
         ReviewState(row.display_state),
     )
 
@@ -148,6 +150,7 @@ class SqlAlchemyCandidateRepository:
         self._session = session
 
     def add(self, revision: CandidateRevision) -> None:
+        revision = replace(revision, created_at=revision.created_at.astimezone(UTC))
         existing = self._session.get(CandidateRevisionModel, revision.id)
         if existing is not None:
             if not evidence_equal(_candidate(existing), revision) or not evidence_equal(
@@ -271,6 +274,12 @@ class SqlAlchemyClassificationRepository:
         self._session = session
 
     def add(self, result: ClassificationResult) -> None:
+        result = replace(result, evaluated_at=result.evaluated_at.astimezone(UTC))
+        existing = self._session.get(ClassificationResultModel, result.id)
+        if existing is not None:
+            if not evidence_equal(_classification(existing), result):
+                raise ValueError("Classification identity mismatch")
+            return
         self._session.add(
             ClassificationResultModel(
                 id=result.id,
@@ -298,6 +307,11 @@ class SqlAlchemyClassificationRepository:
         )
 
     def add_dependency(self, dependency: DependencyRecord) -> None:
+        existing = self._session.get(DependencyRecordModel, dependency.id)
+        if existing is not None:
+            if not evidence_equal(_dependency(existing), dependency):
+                raise ValueError("Dependency identity mismatch")
+            return
         self._session.add(
             DependencyRecordModel(
                 id=dependency.id,
@@ -347,6 +361,14 @@ class SqlAlchemyReviewRepository:
         self._session = session
 
     def add(self, review: ReviewItem) -> None:
+        review = replace(review, created_at=review.created_at.astimezone(UTC))
+        existing = self._session.get(ReviewItemModel, review.id)
+        if existing is not None:
+            if not evidence_equal(_review(existing), review) or not evidence_equal(
+                existing.reasons, array_json(review.reasons)
+            ):
+                raise ValueError("Review identity mismatch")
+            return
         self._session.add(
             ReviewItemModel(
                 id=review.id,
