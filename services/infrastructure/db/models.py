@@ -205,3 +205,190 @@ class PipelineEventModel(Base):
     event_type: Mapped[str]
     facts: Mapped[dict[str, object]] = mapped_column(JSONB)
     occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class CandidateRevisionModel(Base):
+    __tablename__ = "candidate_revision"
+    __table_args__ = (
+        UniqueConstraint(
+            "raw_record_id", "revision_number", name="uq_candidate_raw_revision"
+        ),
+        CheckConstraint("revision_number >= 1", name="ck_candidate_revision_number"),
+        CheckConstraint(
+            "(revision_number = 1 AND parent_revision_id IS NULL AND origin = "
+            "'normalise') OR (revision_number > 1 AND parent_revision_id IS "
+            "NOT NULL AND origin <> 'normalise' AND origin <> '')",
+            name="ck_candidate_parent",
+        ),
+        CheckConstraint("parent_revision_id <> id", name="ck_candidate_not_own_parent"),
+        CheckConstraint(
+            "(jsonb_typeof(payload) = 'object' AND payload ? 'entity_type' AND"
+            " payload ? '$type' AND ((entity_type IN "
+            "('customer','product','order') AND payload->>'entity_type' = "
+            "entity_type AND payload->>'$type' = CASE entity_type WHEN "
+            "'customer' THEN 'CustomerCandidate' WHEN 'product' THEN "
+            "'ProductCandidate' WHEN 'order' THEN 'OrderCandidate' END) OR "
+            "(entity_type IS NULL AND payload->'entity_type' = 'null'::jsonb "
+            "AND payload->>'$type' = 'RejectedCandidateShell'))) IS TRUE",
+            name="ck_candidate_payload",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True)
+    raw_record_id: Mapped[UUID] = mapped_column(ForeignKey("raw_record.id"))
+    parent_revision_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("candidate_revision.id")
+    )
+    entity_type: Mapped[str | None]
+    revision_number: Mapped[int]
+    origin: Mapped[str]
+    payload: Mapped[dict[str, object]] = mapped_column(JSONB)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class TransformationEventModel(Base):
+    __tablename__ = "transformation_event"
+    __table_args__ = (
+        UniqueConstraint(
+            "candidate_revision_id", "sequence", name="uq_transformation_sequence"
+        ),
+        CheckConstraint("sequence >= 1", name="ck_transformation_sequence"),
+        CheckConstraint(
+            "jsonb_typeof(before) = 'object' AND jsonb_typeof(after) = 'object'",
+            name="ck_transformation_values",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True)
+    candidate_revision_id: Mapped[UUID] = mapped_column(
+        ForeignKey("candidate_revision.id")
+    )
+    operation: Mapped[str]
+    field_path: Mapped[str]
+    before: Mapped[dict[str, object]] = mapped_column(JSONB)
+    after: Mapped[dict[str, object]] = mapped_column(JSONB)
+    sequence: Mapped[int]
+
+
+class DataQualityIssueModel(Base):
+    __tablename__ = "data_quality_issue"
+    __table_args__ = (
+        CheckConstraint(
+            "severity IN ('info','warning','error')", name="ck_issue_severity"
+        ),
+        CheckConstraint(
+            "jsonb_typeof(source_refs) = 'array'", name="ck_issue_source_refs"
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True)
+    candidate_revision_id: Mapped[UUID] = mapped_column(
+        ForeignKey("candidate_revision.id")
+    )
+    code: Mapped[str]
+    severity: Mapped[str]
+    field_path: Mapped[str]
+    summary: Mapped[str]
+    source_refs: Mapped[list[object]] = mapped_column(JSONB)
+    tentative_cause: Mapped[str | None]
+
+
+class ClassificationResultModel(Base):
+    __tablename__ = "classification_result"
+    __table_args__ = (
+        UniqueConstraint(
+            "candidate_revision_id",
+            "rules_version",
+            "fx_snapshot_id",
+            name="uq_classification_revision_rules_snapshot",
+            postgresql_nulls_not_distinct=True,
+        ),
+        CheckConstraint(
+            "verdict IN "
+            "('CLEAN','AUTO_REPAIRED','NEEDS_REVIEW','REJECTED','DUPLICATE')",
+            name="ck_classification_verdict",
+        ),
+        CheckConstraint(
+            "readiness IN ('eligible','blocked_by_dependency','ineligible')",
+            name="ck_classification_readiness",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True)
+    candidate_revision_id: Mapped[UUID] = mapped_column(
+        ForeignKey("candidate_revision.id")
+    )
+    rules_version: Mapped[str]
+    fx_snapshot_id: Mapped[UUID | None]
+    verdict: Mapped[str]
+    readiness: Mapped[str]
+    evaluated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class DependencyRecordModel(Base):
+    __tablename__ = "dependency_record"
+    __table_args__ = (
+        CheckConstraint(
+            "kind IN ('customer','product','referral')", name="ck_dependency_kind"
+        ),
+        CheckConstraint(
+            "state IN ('resolved','unresolved','ambiguous','blocked')",
+            name="ck_dependency_state",
+        ),
+        CheckConstraint(
+            "resolved_entity_id IS NULL OR state = 'resolved'",
+            name="ck_dependency_entity",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True)
+    classification_id: Mapped[UUID] = mapped_column(
+        ForeignKey("classification_result.id")
+    )
+    kind: Mapped[str]
+    referenced_business_value: Mapped[str]
+    resolved_entity_id: Mapped[UUID | None]
+    state: Mapped[str]
+
+
+class DuplicateRelationModel(Base):
+    __tablename__ = "duplicate_relation"
+    __table_args__ = (
+        UniqueConstraint(
+            "later_raw_id",
+            "earlier_raw_id",
+            "comparison_scope",
+            name="uq_duplicate_relation",
+        ),
+        CheckConstraint("later_raw_id <> earlier_raw_id", name="ck_duplicate_distinct"),
+        CheckConstraint(
+            "comparison_scope IN ('same_run','earlier_run')", name="ck_duplicate_scope"
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True)
+    later_raw_id: Mapped[UUID] = mapped_column(ForeignKey("raw_record.id"))
+    earlier_raw_id: Mapped[UUID] = mapped_column(ForeignKey("raw_record.id"))
+    comparison_scope: Mapped[str]
+
+
+class ReviewItemModel(Base):
+    __tablename__ = "review_item"
+    __table_args__ = (
+        UniqueConstraint("classification_id", name="uq_review_classification"),
+        CheckConstraint("display_state = 'open'", name="ck_review_state"),
+        CheckConstraint(
+            "jsonb_typeof(reasons) = 'array' AND jsonb_array_length(reasons) > 0",
+            name="ck_review_reasons",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True)
+    run_id: Mapped[UUID] = mapped_column(ForeignKey("run.id"))
+    raw_record_id: Mapped[UUID] = mapped_column(ForeignKey("raw_record.id"))
+    classification_id: Mapped[UUID] = mapped_column(
+        ForeignKey("classification_result.id")
+    )
+    reasons: Mapped[list[object]] = mapped_column(JSONB)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    display_state: Mapped[str]

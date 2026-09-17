@@ -26,6 +26,11 @@ from services.application.ports import (
     SourceRepository,
 )
 from services.domain.runs import RunState
+from services.infrastructure.db.derived_repositories import (
+    SqlAlchemyCandidateRepository,
+    SqlAlchemyClassificationRepository,
+    SqlAlchemyReviewRepository,
+)
 from services.infrastructure.db.models import RunModel
 from services.infrastructure.db.uow import SqlAlchemyUnitOfWork
 
@@ -232,6 +237,9 @@ def unused_repositories(session: Session) -> Repositories:
         raw_records=cast(RawRecordRepository, Mock(spec=RawRecordRepository)),
         checkpoints=cast(CheckpointRepository, Mock(spec=CheckpointRepository)),
         events=cast(EventRepository, Mock(spec=EventRepository)),
+        candidates=SqlAlchemyCandidateRepository(session),
+        classifications=SqlAlchemyClassificationRepository(session),
+        reviews=SqlAlchemyReviewRepository(session),
     )
 
 

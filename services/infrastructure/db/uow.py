@@ -6,6 +6,11 @@ from typing import Self
 
 from sqlalchemy.orm import Session
 
+from services.application.derived_ports import (
+    CandidateRepository,
+    ClassificationRepository,
+    ReviewRepository,
+)
 from services.application.ports import (
     CheckpointRepository,
     EventRepository,
@@ -61,6 +66,18 @@ class SqlAlchemyUnitOfWork:
     @property
     def events(self) -> EventRepository:
         return self.repositories.events
+
+    @property
+    def candidates(self) -> CandidateRepository:
+        return self.repositories.candidates
+
+    @property
+    def classifications(self) -> ClassificationRepository:
+        return self.repositories.classifications
+
+    @property
+    def reviews(self) -> ReviewRepository:
+        return self.repositories.reviews
 
     def __enter__(self) -> Self:
         if self._session is not None:

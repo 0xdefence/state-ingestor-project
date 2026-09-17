@@ -7,6 +7,11 @@ from types import TracebackType
 from typing import BinaryIO, Literal, Protocol, Self
 from uuid import UUID
 
+from services.application.derived_ports import (
+    CandidateRepository,
+    ClassificationRepository,
+    ReviewRepository,
+)
 from services.domain.raw import RawRecord
 from services.domain.runs import RunState
 
@@ -143,9 +148,18 @@ class Repositories:
     raw_records: RawRecordRepository
     checkpoints: CheckpointRepository
     events: EventRepository
+    candidates: CandidateRepository
+    classifications: ClassificationRepository
+    reviews: ReviewRepository
 
 
 class UnitOfWork(Protocol):
+    @property
+    def candidates(self) -> CandidateRepository: ...
+    @property
+    def classifications(self) -> ClassificationRepository: ...
+    @property
+    def reviews(self) -> ReviewRepository: ...
     @property
     def sources(self) -> SourceRepository: ...
     @property

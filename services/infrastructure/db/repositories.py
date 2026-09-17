@@ -21,6 +21,15 @@ from services.application.ports import (
 )
 from services.domain.raw import RawRecord
 from services.domain.runs import RunChainInvariantError, RunState
+from services.infrastructure.db.derived_repositories import (
+    SqlAlchemyCandidateRepository as SqlAlchemyCandidateRepository,
+)
+from services.infrastructure.db.derived_repositories import (
+    SqlAlchemyClassificationRepository as SqlAlchemyClassificationRepository,
+)
+from services.infrastructure.db.derived_repositories import (
+    SqlAlchemyReviewRepository as SqlAlchemyReviewRepository,
+)
 from services.infrastructure.db.models import (
     PipelineCheckpointModel,
     PipelineEventModel,

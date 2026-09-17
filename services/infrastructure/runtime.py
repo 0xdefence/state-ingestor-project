@@ -15,6 +15,11 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from services.application.ports import Clock, Repositories, SourceStore
 from services.application.process import UnitOfWorkFactory
+from services.infrastructure.db.derived_repositories import (
+    SqlAlchemyCandidateRepository,
+    SqlAlchemyClassificationRepository,
+    SqlAlchemyReviewRepository,
+)
 from services.infrastructure.db.repositories import (
     SqlAlchemyCheckpointRepository,
     SqlAlchemyEventRepository,
@@ -89,6 +94,9 @@ def _repositories(session: Session) -> Repositories:
         SqlAlchemyRawRecordRepository(session),
         SqlAlchemyCheckpointRepository(session),
         SqlAlchemyEventRepository(session),
+        SqlAlchemyCandidateRepository(session),
+        SqlAlchemyClassificationRepository(session),
+        SqlAlchemyReviewRepository(session),
     )
 
 

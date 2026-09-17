@@ -14,6 +14,11 @@ from services.application.ingest import IngestFile, ingest_file
 from services.application.ports import Repositories
 from services.domain.raw import RawRecord
 from services.domain.runs import RunState
+from services.infrastructure.db.derived_repositories import (
+    SqlAlchemyCandidateRepository,
+    SqlAlchemyClassificationRepository,
+    SqlAlchemyReviewRepository,
+)
 from services.infrastructure.db.models import (
     PipelineEventModel,
     RawRecordModel,
@@ -43,6 +48,9 @@ def repositories(session: Session) -> Repositories:
         SqlAlchemyRawRecordRepository(session),
         SqlAlchemyCheckpointRepository(session),
         SqlAlchemyEventRepository(session),
+        SqlAlchemyCandidateRepository(session),
+        SqlAlchemyClassificationRepository(session),
+        SqlAlchemyReviewRepository(session),
     )
 
 

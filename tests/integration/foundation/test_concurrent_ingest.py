@@ -34,6 +34,11 @@ from services.application.ports import (
     SourceFile,
 )
 from services.domain.runs import RunChainInvariantError, RunState
+from services.infrastructure.db.derived_repositories import (
+    SqlAlchemyCandidateRepository,
+    SqlAlchemyClassificationRepository,
+    SqlAlchemyReviewRepository,
+)
 from services.infrastructure.db.models import (
     RawRecordModel,
     RunModel,
@@ -92,6 +97,9 @@ def repositories(session: Session) -> Repositories:
         cast(RawRecordRepository, Mock(spec=RawRecordRepository)),
         SqlAlchemyCheckpointRepository(session),
         cast(EventRepository, Mock(spec=EventRepository)),
+        SqlAlchemyCandidateRepository(session),
+        SqlAlchemyClassificationRepository(session),
+        SqlAlchemyReviewRepository(session),
     )
 
 
@@ -143,6 +151,9 @@ def test_concurrent_identical_ingests_create_one_run(
             bundle.raw_records,
             bundle.checkpoints,
             bundle.events,
+            bundle.candidates,
+            bundle.classifications,
+            bundle.reviews,
         )
 
     def submit(name: str) -> IngestResult:
