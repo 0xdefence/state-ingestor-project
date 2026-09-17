@@ -237,3 +237,93 @@ def test_concurrent_imports_share_one_complete_snapshot(
     with migrated_engine.connect() as connection:
         assert connection.scalar(text("SELECT count(*) FROM fx_snapshot")) == 1
         assert connection.scalar(text("SELECT count(*) FROM fx_rate")) == 1768
+
+
+@pytest.mark.parametrize("changed_side", ["stored", "supplied"])
+def test_replay_rejects_changed_decimal_scale(
+    migrated_engine: Engine,
+    changed_side: str,
+) -> None:
+    from services.infrastructure.fx_importer import import_fx_snapshot
+
+    pinned = import_fx_snapshot(FIXTURE, MANIFEST, lambda: uow(migrated_engine))
+    assert pinned.rates[0].currency == "GBP"
+    assert pinned.rates[0].publication_date == date(2023, 3, 30)
+    assert (
+        pinned.rates[0].eur_reference_rate.as_tuple() == Decimal("0.88164").as_tuple()
+    )
+    changed_rate = Decimal("0.881640")
+    if changed_side == "stored":
+        with migrated_engine.begin() as connection:
+            connection.execute(
+                text(
+                    "UPDATE fx_rate SET eur_reference_rate=:rate "
+                    "WHERE snapshot_id=:id AND currency='GBP' "
+                    "AND publication_date='2023-03-30'"
+                ),
+                {"rate": changed_rate, "id": pinned.id},
+            )
+        with uow(migrated_engine) as work:
+            persisted = work.fx.get(pinned.id).rates[0].eur_reference_rate
+            assert persisted.as_tuple() == Decimal("0.881640").as_tuple()
+    else:
+        pinned = replace(
+            pinned,
+            rates=(
+                replace(pinned.rates[0], eur_reference_rate=changed_rate),
+                *pinned.rates[1:],
+            ),
+        )
+    with uow(migrated_engine) as work:
+        with pytest.raises(ValueError, match="immutable"):
+            work.fx.add(pinned)
+
+
+def test_replay_canonicalizes_rate_order_without_losing_identity(
+    migrated_engine: Engine,
+) -> None:
+    from services.infrastructure.fx_importer import import_fx_snapshot
+
+    pinned = import_fx_snapshot(FIXTURE, MANIFEST, lambda: uow(migrated_engine))
+    with uow(migrated_engine) as work:
+        work.fx.add(replace(pinned, rates=tuple(reversed(pinned.rates))))
+        work.commit()
+    with uow(migrated_engine) as work:
+        stored = work.fx.get(pinned.id)
+        assert [
+            (r.publication_date, r.currency, r.eur_reference_rate.as_tuple())
+            for r in stored.rates
+        ] == [
+            (r.publication_date, r.currency, r.eur_reference_rate.as_tuple())
+            for r in pinned.rates
+        ]
+        # A different publication is different evidence, even with the same value.
+        changed_identity = replace(pinned.rates[0], publication_date=date(2023, 3, 29))
+        with pytest.raises(ValueError, match="immutable"):
+            work.fx.add(replace(pinned, rates=(changed_identity, *pinned.rates[1:])))
+        with pytest.raises(ValueError, match="immutable"):
+            work.fx.add(replace(pinned, rates=(changed_identity, *pinned.rates)))
+
+
+def test_snapshot_read_keeps_utc_run_date_across_session_timezones(
+    migrated_engine: Engine,
+) -> None:
+    from datetime import UTC, datetime
+
+    from services.infrastructure.fx_importer import read_fx_snapshot
+    from services.pipeline.fx import convert_lifetime_spend_to_gbp
+
+    pinned = replace(
+        read_fx_snapshot(FIXTURE, MANIFEST),
+        effective_at=datetime(2026, 9, 16, 23, 30, tzinfo=UTC),
+    )
+    with uow(migrated_engine) as work:
+        work.fx.add(pinned)
+        work.commit()
+    with uow(migrated_engine) as work:
+        work.session.execute(text("SET LOCAL TIME ZONE 'Europe/London'"))
+        stored = work.fx.get(pinned.id)
+        converted = convert_lifetime_spend_to_gbp(Decimal("100"), "USD", stored)
+        assert converted.requested_date == date(2026, 9, 16)
+        assert stored.effective_at.isoformat() == "2026-09-16T23:30:00+00:00"
+        work.fx.add(pinned)

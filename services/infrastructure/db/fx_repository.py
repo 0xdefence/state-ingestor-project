@@ -1,6 +1,7 @@
 """Immutable snapshot writes and publication-bounded Decimal rate reads."""
 
-from datetime import date
+from dataclasses import replace
+from datetime import UTC, date
 from uuid import UUID
 
 from sqlalchemy import select
@@ -8,6 +9,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from services.domain.fx import FxRate, FxSnapshot
+from services.infrastructure.db.derived_codec import evidence_equal
 from services.infrastructure.db.models import FxRateModel, FxSnapshotModel
 
 
@@ -33,13 +35,27 @@ class SqlAlchemyFxRepository:
         return FxSnapshot(
             row.id,
             row.manifest_hash,
-            row.effective_at,
+            row.effective_at.astimezone(UTC),
             row.source,
             row.source_url,
             tuple(_rate(rate) for rate in rates),
         )
 
     def add(self, snapshot: FxSnapshot) -> None:
+        # Rate identity is (snapshot, publication, currency), not input position.
+        # Compare complete evidence in the same canonical order used by get().
+        # PostgreSQL timestamptz stores instants; session zones must not change
+        # snapshot dates or make identical metadata fail representation checks.
+        snapshot = replace(
+            snapshot,
+            effective_at=snapshot.effective_at.astimezone(UTC),
+            rates=tuple(
+                sorted(
+                    snapshot.rates,
+                    key=lambda rate: (rate.publication_date, rate.currency),
+                )
+            ),
+        )
         # ON CONFLICT serializes concurrent imports on the immutable manifest key.
         created = self._session.scalar(
             insert(FxSnapshotModel)
@@ -59,7 +75,9 @@ class SqlAlchemyFxRepository:
                     FxSnapshotModel.manifest_hash == snapshot.manifest_hash
                 )
             )
-            if existing_id is None or self.get(existing_id) != snapshot:
+            if existing_id is None or not evidence_equal(
+                self.get(existing_id), snapshot
+            ):
                 raise ValueError("immutable FX snapshot/rates mismatch")
             return
         self._session.add_all(
