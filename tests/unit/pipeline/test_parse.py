@@ -19,7 +19,7 @@ from uuid import UUID
 import pytest
 
 from services.application.ingest import IngestFile, ingest_file
-from services.application.ports import PipelineEvent
+from services.application.ports import PipelineEvent, Stage
 from services.domain.raw import RawRecord, RawRecordKind
 from services.domain.runs import RunState
 from services.infrastructure.source_store import FilesystemSourceStore
@@ -300,6 +300,16 @@ class MemoryEvents:
     def __init__(self) -> None:
         self.rows: list[PipelineEvent] = []
 
+    def next_attempt_number(self, run_id: UUID, stage: Stage) -> int:
+        attempts = [
+            event.facts["attempt_number"]
+            for event in self.rows
+            if event.run_id == run_id
+            and event.stage == stage
+            and event.event_type in ("stage_started", "stage_retried")
+        ]
+        return max((cast(int, attempt) for attempt in attempts), default=0) + 1
+
     def append(self, event: PipelineEvent) -> None:
         self.rows.append(event)
 
@@ -558,3 +568,99 @@ def test_invalid_utf8_records_failure_without_completion(tmp_path: Path) -> None
         "stage_started",
         "stage_failed",
     ]
+
+
+@pytest.mark.parametrize("failure", ["batch", "completion"])
+def test_event_ids_are_stable_uuid5_through_recovery(
+    tmp_path: Path, failure: str
+) -> None:
+    from services.application.process import RetryRun, parse_run, retry_run
+
+    database, store, run_id = prepared_run(tmp_path)
+    baseline = ParseMemoryDatabase()
+    baseline.sources = database.sources
+    baseline.runs.rows = dict(database.runs.rows)
+    parse_run(run_id, 2, baseline.factory, store, clock=FixedClock())
+
+    class FailedCompletionUow(ParseMemoryUow):
+        def commit(self) -> None:
+            if self.runs.get(run_id).state == RunState.PARSED:
+                raise RuntimeError("completion commit failed")
+            super().commit()
+
+    def completion_factory() -> FailedCompletionUow:
+        return FailedCompletionUow(database)
+
+    with pytest.raises(RuntimeError):
+        if failure == "batch":
+            parse_run(
+                run_id,
+                2,
+                database.factory,
+                store,
+                fail_second_batch,
+                clock=FixedClock(),
+            )
+        else:
+            parse_run(run_id, 2, completion_factory, store, clock=FixedClock())
+    retry_run(RetryRun(run_id, 2), database.factory, store, FixedClock())
+
+    def stable_ids(
+        database: ParseMemoryDatabase,
+    ) -> dict[tuple[str, object, object], UUID]:
+        events = [
+            event
+            for event in database.events.rows
+            if event.event_type in ("batch_committed", "stage_completed")
+        ]
+        assert len(events) == 4
+        assert all(event.id.version == 5 for event in events)
+        return {
+            (
+                event.event_type,
+                event.facts["batch_number"],
+                event.facts["record_ordinal"],
+            ): event.id
+            for event in events
+        }
+
+    assert stable_ids(database) == stable_ids(baseline)
+    before = list(database.events.rows)
+    retry_run(RetryRun(run_id, 2), database.factory, store, FixedClock())
+    assert database.events.rows == before
+
+
+def test_event_attempts_distinguish_repeated_failures_at_same_checkpoint(
+    tmp_path: Path,
+) -> None:
+    from services.application.process import RetryRun, parse_run, retry_run
+
+    database, store, run_id = prepared_run(tmp_path)
+    for _ in range(3):
+        with pytest.raises(RuntimeError):
+            parse_run(
+                run_id,
+                2,
+                database.factory,
+                store,
+                fail_second_batch,
+                clock=FixedClock(),
+            )
+    failures = [
+        event for event in database.events.rows if event.event_type == "stage_failed"
+    ]
+    starts = [
+        event
+        for event in database.events.rows
+        if event.event_type in ("stage_started", "stage_retried")
+    ]
+    assert len(failures) == len(starts) == 3
+    assert all(event.id.version == 5 for event in starts + failures)
+    assert [event.facts["attempt_number"] for event in starts] == [1, 2, 3]
+    assert [event.facts["attempt_number"] for event in failures] == [1, 2, 3]
+    assert [event.facts["record_ordinal"] for event in failures] == [2, 2, 2]
+    assert len({event.id for event in starts + failures}) == 6
+    before = list(database.events.rows)
+    retry_run(RetryRun(run_id, 2), database.factory, store, FixedClock())
+    assert database.events.rows[: len(before)] == before
+    assert database.events.rows[-1].facts["attempt_number"] == 4

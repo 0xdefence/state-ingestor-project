@@ -123,6 +123,14 @@ class CheckpointRepository(Protocol):
 
 
 class EventRepository(Protocol):
+    def next_attempt_number(self, run_id: UUID, stage: Stage) -> int:
+        """Lock the run and allocate from committed starts in this transaction.
+
+        The caller must append its start event before committing to reserve the
+        returned number durably. A rolled-back start consumes no attempt.
+        """
+        ...
+
     def append(self, event: PipelineEvent) -> None: ...
 
 

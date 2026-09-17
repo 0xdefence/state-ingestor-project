@@ -169,3 +169,107 @@ def test_raw_replay_requires_identical_evidence(engine: Engine, tmp_path: Path) 
             )
             uow.commit()
     assert records_for(engine, result.run_id) == records[:2]
+
+
+def test_event_attempt_numbers_survive_independent_transactions(
+    engine: Engine, tmp_path: Path
+) -> None:
+    from services.application.process import RetryRun, parse_run, retry_run
+
+    store = FilesystemSourceStore(tmp_path)
+    result = ingest_file(
+        IngestFile(BytesIO(RECOVERY_BYTES), "input", "/missing", "operator"),
+        uow_for(engine),
+        store,
+        FixedClock(),
+    )
+
+    def factory() -> SqlAlchemyUnitOfWork:
+        return uow_for(engine)
+
+    for _ in range(3):
+        with pytest.raises(RuntimeError):
+            parse_run(
+                result.run_id, 2, factory, store, fail_second_batch, clock=FixedClock()
+            )
+    with Session(engine) as session:
+        events = session.scalars(select(PipelineEventModel)).all()
+        assert all(event.id.version == 5 for event in events)
+        failures = [event for event in events if event.event_type == "stage_failed"]
+        assert sorted(event.facts["attempt_number"] for event in failures) == [1, 2, 3]
+        assert [event.facts["record_ordinal"] for event in failures] == [2, 2, 2]
+        old_ids = {event.id for event in events}
+    retry_run(RetryRun(result.run_id, 2), factory, store, FixedClock())
+    with Session(engine) as session:
+        events = session.scalars(select(PipelineEventModel)).all()
+        assert old_ids <= {event.id for event in events}
+        assert (
+            len([event for event in events if event.event_type == "batch_committed"])
+            == 3
+        )
+        completions = [
+            event for event in events if event.event_type == "stage_completed"
+        ]
+        assert len(completions) == 1
+        assert completions[0].facts["attempt_number"] == 4
+
+
+def test_success_event_replay_preserves_original_evidence(
+    engine: Engine, tmp_path: Path
+) -> None:
+    from datetime import timedelta
+
+    from services.application.ports import PipelineEvent
+    from services.application.process import parse_run
+
+    store = FilesystemSourceStore(tmp_path)
+    result = ingest_file(
+        IngestFile(BytesIO(RECOVERY_BYTES), "input", "/missing", "operator"),
+        uow_for(engine),
+        store,
+        FixedClock(),
+    )
+
+    def factory() -> SqlAlchemyUnitOfWork:
+        return uow_for(engine)
+
+    parse_run(result.run_id, 2, factory, store, clock=FixedClock())
+    with Session(engine) as session:
+        rows = session.scalars(
+            select(PipelineEventModel).where(
+                PipelineEventModel.event_type.in_(
+                    ("batch_committed", "stage_completed")
+                )
+            )
+        ).all()
+        originals = [
+            PipelineEvent(
+                row.id, row.run_id, "parse", row.event_type, row.facts, row.occurred_at
+            )
+            for row in rows
+        ]
+    with factory() as uow:
+        for original in originals:
+            uow.events.append(
+                replace(
+                    original,
+                    facts={**original.facts, "attempt_number": 2},
+                    occurred_at=original.occurred_at + timedelta(seconds=1),
+                )
+            )
+        uow.commit()
+    with Session(engine) as session:
+        for original in originals:
+            row = session.get(PipelineEventModel, original.id)
+            assert row is not None
+            assert row.facts == original.facts
+            assert row.occurred_at == original.occurred_at
+        assert len(session.scalars(select(PipelineEventModel)).all()) == 5
+    with pytest.raises(ValueError, match="identity"):
+        with factory() as uow:
+            uow.events.append(
+                replace(
+                    originals[0], facts={**originals[0].facts, "record_ordinal": 999}
+                )
+            )
+            uow.commit()

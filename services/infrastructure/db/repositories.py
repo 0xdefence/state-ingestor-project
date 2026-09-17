@@ -290,5 +290,46 @@ class SqlAlchemyEventRepository:
     def __init__(self, session: Session) -> None:
         self._session = session
 
+    def next_attempt_number(self, run_id: UUID, stage: Stage) -> int:
+        # Serialize attempt allocation until the caller commits the start event.
+        # Keep this separate from the aggregate query: FOR UPDATE cannot lock an
+        # aggregate result, and READ COMMITTED must see a waiting worker's commit.
+        self._session.scalars(
+            select(RunModel.id).where(RunModel.id == run_id).with_for_update()
+        ).one()
+        latest: int | None = self._session.scalar(
+            select(
+                func.max(PipelineEventModel.facts["attempt_number"].as_integer())
+            ).where(
+                PipelineEventModel.run_id == run_id,
+                PipelineEventModel.stage == stage,
+                PipelineEventModel.event_type.in_(("stage_started", "stage_retried")),
+            )
+        )
+        return (latest or 0) + 1
+
     def append(self, event: PipelineEvent) -> None:
-        self._session.add(PipelineEventModel(**asdict(event)))
+        inserted = self._session.scalar(
+            insert(PipelineEventModel)
+            .values(**asdict(event))
+            .on_conflict_do_nothing(index_elements=[PipelineEventModel.id])
+            .returning(PipelineEventModel.id)
+        )
+        if inserted is not None:
+            return
+        row = self._session.scalars(
+            select(PipelineEventModel).where(PipelineEventModel.id == event.id)
+        ).one()
+        stored_facts = dict(row.facts)
+        incoming_facts = dict(event.facts)
+        if event.event_type in ("batch_committed", "stage_completed"):
+            # Replay retains the original committing attempt and timestamp.
+            # All facts about the completed work must still agree.
+            stored_facts.pop("attempt_number", None)
+            incoming_facts.pop("attempt_number", None)
+        if (row.run_id, row.stage, row.event_type) != (
+            event.run_id,
+            event.stage,
+            event.event_type,
+        ) or stored_facts != incoming_facts:
+            raise ValueError(f"Pipeline event identity mismatch: {event.id}")

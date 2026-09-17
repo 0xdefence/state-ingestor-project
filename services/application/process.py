@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from itertools import islice
 from typing import cast
-from uuid import UUID, uuid4
+from uuid import UUID
 
 from services.application.ingest import IngestFile, IngestResult, ingest_file
 from services.application.ports import (
@@ -16,9 +16,12 @@ from services.application.ports import (
     SourceStore,
     UnitOfWork,
 )
+from services.domain.ids import deterministic_id
 from services.domain.raw import RawRecord
 from services.domain.runs import RunState
 from services.pipeline.parse import parse_records
+
+PIPELINE_EVENT_NAMESPACE = UUID("d6203a35-305c-5df9-9e67-47e08b084d2b")
 
 UnitOfWorkFactory = Callable[[], UnitOfWork]
 FailureInjector = Callable[[int], None]
@@ -72,9 +75,28 @@ def _event(
     event_type: str,
     facts: dict[str, object],
     clock: Clock,
+    attempt_number: int,
 ) -> None:
+    # Successful work has an identity independent of which attempt committed it.
+    # Attempt lifecycle events distinguish repeated failures at one checkpoint.
+    if event_type == "batch_committed":
+        coordinates = ("batch", facts["batch_number"], facts["record_ordinal"])
+    elif event_type == "stage_completed":
+        coordinates = ("checkpoint", facts["record_ordinal"])
+    else:
+        coordinates = ("attempt", attempt_number)
+    event_id = deterministic_id(
+        PIPELINE_EVENT_NAMESPACE, run_id, "parse", event_type, *coordinates
+    )
     uow.events.append(
-        PipelineEvent(uuid4(), run_id, "parse", event_type, facts, clock.now())
+        PipelineEvent(
+            event_id,
+            run_id,
+            "parse",
+            event_type,
+            {**facts, "attempt_number": attempt_number},
+            clock.now(),
+        )
     )
 
 
@@ -111,6 +133,7 @@ def parse_run(
         ):
             raise ValueError(f"Run cannot enter parse from {run.state}")
         source = uow.sources.get(run.source_file_id)
+        attempt_number = uow.events.next_attempt_number(run_id, "parse")
         uow.runs.set_state(run_id, RunState.PARSING)
         _event(
             uow,
@@ -118,6 +141,7 @@ def parse_run(
             "stage_retried" if run.state == RunState.PARSING else "stage_started",
             {"record_ordinal": ordinal, "batch_number": batch_number},
             stage_clock,
+            attempt_number,
         )
         uow.commit()
 
@@ -156,6 +180,7 @@ def parse_run(
                                 "record_count": len(batch),
                             },
                             stage_clock,
+                            attempt_number,
                         )
                         if failure_injector is not None:
                             failure_injector(next_batch)
@@ -169,6 +194,7 @@ def parse_run(
                 "stage_completed",
                 {"record_ordinal": ordinal, "batch_number": batch_number},
                 stage_clock,
+                attempt_number,
             )
             uow.commit()
     except Exception as error:
@@ -188,6 +214,7 @@ def parse_run(
                     "message": str(error),
                 },
                 stage_clock,
+                attempt_number,
             )
             uow.commit()
         raise
