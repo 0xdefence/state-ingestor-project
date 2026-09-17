@@ -2,7 +2,11 @@
 name = "alexis-tutor"
 version = "0.1.0"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "alembic>=1.13,<2",
+    "psycopg[binary]>=3.2,<4",
+    "sqlalchemy>=2.0,<3",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

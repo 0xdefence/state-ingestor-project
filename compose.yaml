@@ -1,0 +1,18 @@
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: alexis
+      POSTGRES_PASSWORD: alexis
+      POSTGRES_DB: alexis
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-55432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U alexis -d alexis"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+volumes:
+  postgres_data:
