@@ -1,46 +1,42 @@
-# Data Structure Specification: `messy_sample_data.csv`
+# Data fixture specification: `messy_sample_data.csv`
 
-This document formally describes the structure of [messy_sample_data.csv](messy_sample_data.csv):
-the intended schema, the variants actually observed, and every exception and edge case found.
-Line numbers refer to **physical lines** in the file (1-based), as shown in an editor.
+This document describes the exact frozen fixture in [messy_sample_data.csv](messy_sample_data.csv). Line numbers are one-based physical lines as displayed by an editor. Product behavior remains governed by [`docs/ARCHITECTURE.md`](../docs/ARCHITECTURE.md); this document inventories the fixture and applies those rules to its observed values.
 
----
-
-## 1. Summary
+## 1. Frozen fixture identity
 
 | Property | Value |
 |---|---|
-| Physical lines | 25 (+ trailing newline) |
-| Parsed CSV records | 24, of which 2 are headers and 1 is blank |
-| Data records | 21 (20 distinct: one exact duplicate) |
-| Entity types | `CUSTOMER` ×7, `PRODUCT` ×7, `ORDER` ×7 (6 distinct) |
-| Logical model | **Discriminated union** (a single table with three entity types), keyed on `record_type` |
+| SHA-256 | `e550ba421ebaac800d2e734c513f65d2bc4197f8b622a2fc82230974744110c4` |
+| Bytes | 5,953 |
+| Physical lines | 54, with a trailing newline |
+| Logical CSV records | 52 |
+| Headers | 2: initial line 1 and repeated line 19 |
+| Blank records | 2: lines 18 and 45 |
+| Data records | 48: 47 distinct plus one exact duplicate |
+| Entity types | `CUSTOMER` ×16, `PRODUCT` ×16, `ORDER` ×16 |
+| Logical model | Discriminated union keyed by `record_type` |
 
-The file is a denormalised export in which three unrelated entity types share one set of ten
-columns. Several columns mean different things depending on `record_type` (see §4).
+The fixture is a denormalised export in which three entity types share ten columns. The `name`, `contact_or_sku`, `value`, `quantity`, `date`, and `status` columns have type-specific meanings.
 
----
+## 2. Physical CSV format
 
-## 2. File-level format (physical layer)
-
-| Aspect | Specification | Observed / Exceptions |
+| Aspect | Intended form | Observed form |
 |---|---|---|
-| Encoding | UTF-8 | File starts with a **UTF-8 BOM** (`EF BB BF`). Naive readers will name the first column `﻿record_type`. |
-| Line terminator | LF (`\n`) | No CR characters present. |
-| Delimiter | `,` | — |
-| Quote char | `"` | RFC 4180 style; embedded `"` escaped as `""` (line 7). |
-| Header | One header row, 10 columns | Header **repeats** on line 19, after a blank line (18). This looks like two files concatenated. |
-| Field count | Exactly 10 per record | Violated on lines 13 (7), 14 (12) and 24 (11). See §6.1. |
-| Multi-line fields | Allowed inside quotes | Line 15–16: one record spans two physical lines. |
-| Non-BMP characters | Allowed | `🌟` (U+1F31F) on line 23. It breaks storage that only handles 3-byte UTF-8, such as MySQL `utf8`/`utf8mb3`. |
+| Encoding | UTF-8 | Starts with UTF-8 BOM `EF BB BF`; includes Latin, CJK, Arabic, emoji, and other non-ASCII text. |
+| Line ending | LF | No CR characters. |
+| Delimiter | `,` | Commas inside valid fields are quoted; line 14 contains unquoted commas. |
+| Quote | `"` | RFC 4180 doubled quotes occur on line 7. |
+| Header | One 10-field header | Exact header repeats on line 19 after blank line 18. |
+| Data width | 10 fields | Lines 13, 14, 24, 31, and 39 have non-ten-field shapes. |
+| Multiline fields | Quoted newlines allowed | Product notes span lines 15–16 and 36–37. |
+| Blank lines | Preserved evidence | Lines 18 and 45 parse as empty logical records. |
 
-### 2.1 Grammar (ABNF, simplified from RFC 4180)
+Simplified grammar:
 
 ```abnf
-file        = [BOM] section *(blank-line section) [LF]
-section     = header LF record *(LF record)
+file        = [BOM] *(header / record / blank-line)
 header      = "record_type,id,name,contact_or_sku,value,quantity,date,status,tags,notes"
-record      = field 9(COMMA field)            ; intended: exactly 10 fields
+record      = field 9(COMMA field)       ; intended width; malformed rows are retained
 field       = escaped / non-escaped
 escaped     = DQUOTE *(TEXTDATA / COMMA / LF / 2DQUOTE) DQUOTE
 non-escaped = *TEXTDATA
@@ -48,303 +44,249 @@ BOM         = %xEF.BB.BF
 blank-line  = LF
 ```
 
----
+Parse stores every logical item and its inclusive physical-line span. It does not silently pad, merge, discard, or rewrite raw fields.
 
-## 3. Columns
+## 3. Shared columns
 
-| # | Column | Role |
+| # | Column | Meaning |
 |---|---|---|
-| 1 | `record_type` | Discriminator: `CUSTOMER` \| `PRODUCT` \| `ORDER` |
-| 2 | `id` | Primary key; its prefix matches the type |
-| 3 | `name` | Customer name / product name / *customer name the order belongs to* |
-| 4 | `contact_or_sku` | **Overloaded**: email / category / product SKU (foreign key) |
-| 5 | `value` | **Overloaded**: lifetime spend / unit price / unit price |
-| 6 | `quantity` | **Overloaded**: unused / stock level / ordered quantity |
-| 7 | `date` | **Overloaded**: signup date / listing date / order date |
-| 8 | `status` | Enum; the allowed values depend on `record_type` |
-| 9 | `tags` | Pipe-delimited list of labels |
+| 1 | `record_type` | `CUSTOMER`, `PRODUCT`, or `ORDER` discriminator |
+| 2 | `id` | Customer ID, product SKU, or order ID |
+| 3 | `name` | Customer name, product name, or order customer name |
+| 4 | `contact_or_sku` | Customer email, product category, or order product SKU |
+| 5 | `value` | Lifetime spend, product unit price, or order unit price |
+| 6 | `quantity` | Unused for customers, product stock, or order quantity |
+| 7 | `date` | Signup date, listed date, or order timestamp |
+| 8 | `status` | Type-specific status |
+| 9 | `tags` | Pipe-delimited labels |
 | 10 | `notes` | Free text |
 
----
+## 4. Intended logical types
 
-## 4. Logical schema per record type
+### 4.1 Customer
 
-Canonical types are the types each field should have **after normalisation**.
-"Observed" lists the raw forms that actually occur.
-
-### 4.1 `CUSTOMER`
-
-| Field | Canonical type | Constraint | Observed variants |
+| Source field | Candidate field | Type and rule | Observed complications |
 |---|---|---|---|
-| `id` | string | `^CUST-\d{4}$`, unique | All conform (`CUST-1001` … `CUST-1007`) |
-| `name` | string, non-empty | trimmed | `Mary O'Brien` (apostrophe), `François Dupont` (non-ASCII), `  Wei Zhang  ` (padding), `Sofia Rossi 🌟` (emoji) |
-| `contact_or_sku` → **`email`** | string \| null | RFC 5322-ish email | `-` used as a null placeholder (CUST-1004) |
-| `value` → **`lifetime_spend`** | decimal(12,2) \| null | ≥ 0; GBP | `$1,240.50`, `890.00`, `€2.345,00`, `1.5e3`, ` 275.00 `, `410.00`, `1050.25` |
-| `quantity` | — (always null) | must be empty | Always empty ✔ |
-| `date` → **`signup_date`** | date | ISO 8601 | `2023-05-12`, `01/22/2023`, `15-Jan-2024`, ` 2023-08-01 ` |
-| `status` | enum `{active, inactive}` | case-insensitive | `Active`, `ACTIVE`, `active`, `inactive`, `Y` |
-| `tags` | list\<string\> | vocabulary: `vip`, `newsletter`, `loyalty` | `vip\|newsletter`, `N/A`, empty |
-| `notes` | string \| null | — | Contains an implicit foreign key: "referral from **CUST-1001**" (line 5) |
+| `id` | `customer_id` | String matching `^CUST-\d{4}$` | All IDs match, including `CUST-0012`. |
+| `name` | `name` | Non-empty trimmed Unicode string | Apostrophe, accents, CJK, Arabic, emoji, padded text, comma, hyphen, and all-uppercase placeholder occur. |
+| `contact_or_sku` | `email` | One email or absent | `-`, `n/a`, and two comma-separated emails occur. |
+| `value` | `lifetime_spend` | Non-negative decimal plus source currency | Currency symbols/codes, localized numbers, annotations, a negative amount, and conversion prose occur. |
+| `quantity` | — | Must be empty | Line 39 is structurally shifted, so emptiness cannot be established safely. |
+| `date` | `signup_date` | Date | ISO, US slash, named month, datetime, dotted forms, slash form, and `unknown` occur. |
+| `status` | `status` | `active` or `inactive` | Case variants and approved `Y→active` occur; `true`, `PENDING`, and `unknown` are unsupported. |
+| `tags` | `tags` | Ordered lowercase list | Empty, `N/A`, malformed delimiters, and new vocabulary occur. |
+| `notes` | `notes` | Trimmed Unicode text or absent | Contains referral text and free-form evidence. |
 
-Note: `lifetime_spend` is confirmed lifetime spend in GBP. It cannot be derived from the orders in this file
-(for example, John Smith is 1,240.50 but has only a 19.99 order) because it includes history outside
-this extract. Do not validate it against order sums.
+Lifetime spend is not derived from orders in this file and must not be reconciled against order totals.
 
-### 4.2 `PRODUCT`
+### 4.2 Product
 
-| Field | Canonical type | Constraint | Observed variants |
+| Source field | Candidate field | Type and rule | Observed complications |
 |---|---|---|---|
-| `id` → **`sku`** | string | `^SKU-\d{4}$`, unique | `SKU-00204` (5 digits, zero-padded; typo, normalised to `SKU-2004`) |
-| `name` | string, non-empty | — | `Bluetooth Keyboard - DE Layout` (contains ` - `) |
-| `contact_or_sku` → **`category`** | enum-like string | `{Electronics, Home & Office, Accessories}` | `&` in value |
-| `value` → **`unit_price`** | decimal(10,2) \| null | > 0 | `19.99`, `45,00` (decimal comma), `TBD`, `12.99 (10% off)` (annotated) |
-| `quantity` → **`stock_qty`** | integer \| null | may be negative (= units on backorder) | `150`, `0`, `-12`, `many` |
-| `date` → **`listed_date`** | date \| null | ISO 8601 | Empty on SKU-2003 |
-| `status` | enum `{in_stock, discontinued, pending_review, backordered}` | lowercase snake_case | All conform |
-| `tags` | list\<string\> | vocabulary: `electronics`, `accessories`, `limited`, `new`, `home`, `office`, `ergonomic` | Some overlap with `category` |
-| `notes` | string \| null | — | Embedded newline (SKU-2005); stray extra field (SKU-2007) |
+| `id` | `sku` | String matching `^SKU-\d{4}$` | `SKU-00204` and `SKU-00209` have five-digit zero-padded bodies. |
+| `name` | `name` | Non-empty Unicode string | Hyphens, parentheses, and quoted commas occur. |
+| `contact_or_sku` | `category` | Registered category | Approved values coexist with `Storage`, `Office`, `Office, Electronics`. |
+| `value` | `unit_price` | Positive decimal plus currency | Deferred, decimal comma, annotation, discount prose, dual values, arithmetic expression, and dual currencies occur. |
+| `quantity` | `stock_qty` | Integer; negative means backorder | `many` and `5|in-stock` are invalid integers; negative values occur. |
+| `date` | `listed_date` | Date or absent | ISO dates plus a datetime occur. |
+| `status` | `status` | Registered product status | Missing, `out_of_stock`, and `pre_order` are outside the approved enum. |
+| `tags` | `tags` | Ordered lowercase list | Several new tags occur and require vocabulary validation. |
+| `notes` | `notes` | Trimmed Unicode text or absent | Two multiline notes and one status contradiction occur. |
 
-**Expected status/quantity invariants** (all hold in the sample):
+Approved status/stock invariants are:
 
-- `backordered` ⇒ `stock_qty < 0`
-- `discontinued` ⇒ `stock_qty = 0`
-- `in_stock` ⇒ `stock_qty > 0`
-- `pending_review` ⇒ `unit_price`, `stock_qty` and `listed_date` may be null
+- `backordered` requires `stock_qty < 0`;
+- `discontinued` requires `stock_qty = 0`;
+- `in_stock` requires `stock_qty > 0`;
+- `pending_review` permits unresolved price, stock, and date.
 
-### 4.3 `ORDER`
+### 4.3 Order
 
-| Field | Canonical type | Constraint | Observed variants |
+| Source field | Candidate field | Type and rule | Observed complications |
 |---|---|---|---|
-| `id` → **`order_id`** | string | `^ORD-\d{4}$`, unique | `ORD-3001` appears **twice** (lines 4 and 17, identical) |
-| `name` → **`customer_name`** | string | should match a `CUSTOMER.name` (fallback; future exports carry `customer_id`) | `Sofia Rossi` ≠ `Sofia Rossi 🌟`; `Wei Zhang` ≠ `  Wei Zhang  ` |
-| `contact_or_sku` → **`sku`** | string | FK → `PRODUCT.sku` | All resolve; `SKU-00204` on ORD-3004 (line 13) resolves after normalisation to `SKU-2004` |
-| `value` → **`unit_price`** | decimal(10,2) \| null | unit price; line total = unit_price × quantity (derived, not stored) | `19.99`, `45.00`, `$39.98`, `34.50`, `NULL` |
-| `quantity` | integer \| null | ≠ 0; negative = refund (quantity of units refunded) | `2`, `-1`, `1`, `None` |
-| `date` → **`order_ts`** | date or datetime | ISO 8601 | `2024/02/03 14:22:00` (only value with a time, no timezone) |
-| `status` | enum `{pending, shipped, cancelled, refunded}` | — | **Missing** on ORD-3004 (row truncated) |
-| `tags` | list\<string\> | vocabulary: `express` | Mostly empty |
-| `notes` | string \| null | — | Escaped quotes (ORD-3002); missing on ORD-3004 |
+| `id` | `order_id` | String matching `^ORD-\d{4}$`, unique per identity | `ORD-3001` is repeated exactly on lines 4 and 17. |
+| `name` | `customer_name_raw` | Non-empty string resolved through a match key | Emoji, punctuation, capitalization, transliteration, and spelling differences affect matching. |
+| `contact_or_sku` | `sku` | Reference to a product SKU | Two zero-padded SKUs require governed repair before resolution. |
+| `value` | `unit_price` | Positive decimal plus currency | Null, zero, foreign currency, and one line-total value occur. |
+| `quantity` | `quantity` | Non-zero integer; negative means refund | `None` and absent occur. |
+| `date` | `ordered_at` | Date or datetime | ISO, slash, dotted, two-digit-year, fractional-second, offset-like, and missing forms occur. |
+| `status` | `status` | `pending`, `shipped`, `cancelled`, or `refunded` | Missing and six unsupported states occur. |
+| `tags` | `tags` | Ordered lowercase list | `express` plus new vocabulary occurs. |
+| `notes` | `notes` | Trimmed Unicode text or absent | Escaped quotes and extra trailing empty fields occur. |
 
-**Rule: `unit_price` is always the unit price.**
-- ORD-3001: SKU-2001 (19.99) × 2, `value = 19.99` → conforms (unit price).
-- ORD-3003: SKU-2001 (19.99) × 2, `value = $39.98` → violates the rule (holds line total).
-  Repair: divide by quantity → 19.99 (matches SKU-2001's price), and log as data-quality issue.
+Order `value` is always a unit price. `ORD-3003` contains a line total: `$39.98 ÷ 2 = $19.99`; the registered rule appends a repaired revision before FX conversion.
 
-**Expected status/quantity invariant** (holds in the sample):
-- `quantity < 0` ⇔ `status = refunded` (ORD-3002, line 7)
+The approved refund invariant is `quantity < 0` if and only if `status = refunded`.
 
-**Relationship model.** An order references its customer **by name** in this file (a fallback for legacy exports);
-future exports will carry `customer_id` as the direct join key. Names are not guaranteed unique and are inconsistently
-formatted, so the name-based join is lossy.
+## 5. Approved value rules
 
-```
-CUSTOMER (id) 1 ──< ORDER (customer_id; name-match fallback for legacy files)
-PRODUCT  (sku) 1 ──< ORDER (contact_or_sku, exact)
-CUSTOMER (id) 1 ──< CUSTOMER (referral, only in free-text notes)
-```
+### 5.1 Field states and null tokens
 
----
-
-## 5. Value domains and parsing rules
-
-### 5.1 Null tokens
-
-All of the following occur and should be read as **null**:
-
-| Token | Where |
+| Input | Approved interpretation |
 |---|---|
-| empty string | many fields |
-| `-` | `contact_or_sku` (CUST-1004) |
-| `N/A` | `tags` (CUST-1002) |
-| `NULL` | `value` (ORD-3005) |
-| `None` | `quantity` (ORD-3005) |
-| `TBD` | `value` (SKU-2003), a *deferred* value rather than an absent one |
-| *(missing column)* | `status`, `tags`, `notes` on ORD-3004 |
+| Empty field | `absent` |
+| `-` in customer email | `absent` |
+| `N/A` in tags | empty list |
+| `NULL` in order value | `absent` |
+| `None` in order quantity | `absent` |
+| Missing trailing column | `absent`, with structural issue when required |
+| `TBD` in product price | `deferred` |
+| Unparseable text such as `many` | `unresolved`, with typed issue |
 
-`many` (SKU-2003 quantity) is not a null token. It is a non-numeric placeholder, so map it to
-null and raise a data-quality flag.
+Tokens are field-sensitive. Lowercase `n/a` in customer email, `na` in tags, and `unknown` are not silently treated as approved null tokens.
 
-### 5.2 Monetary values (`value`)
+### 5.2 Money
 
-| Raw | Pattern | Parsed | Currency |
-|---|---|---|---|
-| `19.99` | plain decimal, dot | 19.99 | GBP (default) |
-| `$1,240.50` | symbol + comma thousands + dot decimal | 1240.50 | USD |
-| `$39.98` | symbol + dot decimal | 39.98 | USD |
-| `45,00` | comma decimal | 45.00 | GBP (default) |
-| `€2.345,00` | symbol + dot thousands + comma decimal | 2345.00 | EUR |
-| `1.5e3` | scientific notation | 1500.00 | GBP (default) |
-| ` 275.00 ` | whitespace padded | 275.00 | GBP (default) |
-| `12.99 (10% off)` | number + parenthetical annotation | 12.99 (annotation → metadata) | GBP (default) |
-| `TBD`, `NULL` | tokens | null | — |
+Approved deterministic cases:
 
-**Parsing algorithm** (in order):
-1. Trim whitespace; if the result is a null token, return null.
-2. Remove any trailing parenthetical `\s*\(.*\)$` and keep it as an annotation.
-3. Strip a leading currency symbol (`$`, `€`, `£`) and record it; if none, currency = GBP.
-4. If the value matches `^[+-]?\d+(\.\d+)?[eE][+-]?\d+$`, parse it as scientific notation.
-5. If it contains both `.` and `,`, the **rightmost** separator is the decimal mark.
-6. If it contains only `,` followed by exactly 2 digits at the end, the comma is the decimal mark.
-   Otherwise the comma separates thousands.
-7. Parse the result as a decimal and round to 2 places.
+| Raw | Amount | Currency | Additional data |
+|---|---:|---|---|
+| `19.99` | 19.99 | GBP | — |
+| `$1,240.50` | 1240.50 | USD | — |
+| `$39.98` | 39.98 | USD | repaired to unit price before FX for `ORD-3003` |
+| `45,00` | 45.00 | GBP | — |
+| `€2.345,00` | 2345.00 | EUR | — |
+| `1.5e3` | 1500.00 | GBP | — |
+| ` 275.00 ` | 275.00 | GBP | trimming provenance |
+| `12.99 (10% off)` | 12.99 | GBP | annotation `10% off` |
+| `£759.99 (GBP)` | 759.99 | GBP | annotation `GBP` |
 
-Edge case: a string like `1,240` (comma followed by 3 digits, no dot) is ambiguous. It is
-treated as thousands by rule 6, but that is a guess.
+The algorithm trims, extracts a trailing parenthetical annotation, identifies a leading `$`, `€`, or `£`, handles scientific notation, interprets the rightmost of `.` and `,` as the decimal mark, treats a single comma followed by two digits as decimal, and otherwise treats a comma as thousands. Calculations use decimal arithmetic and round to two places.
 
-Unsymbolled values are GBP (the default). The 3 symbolled values (`$1,240.50` line 2, `€2.345,00` line 8, `$39.98` line 10)
-are foreign-currency exceptions. Keep the source currency and raw amount, convert to GBP, and log a data-quality issue.
-Never just relabel them as GBP. GBP figures are for dashboards and reporting, not accounting, so rates come from the
-ECB euro reference rates (cross-rated via EUR, e.g. USD→GBP = EUR/GBP ÷ EUR/USD). Which rate to use depends on the field:
+The following observed forms are outside that grammar and remain unresolved for review: `149.99|with discount code`, `USD 1200.50`, `85.50|EUR 79.90`, `$8.99 x5=$44.95`, `3,500 SR`, `¥15000`, `$69.99 | €65.00`, and `$2,340 MXN converted @ 17.5 = $133.71`.
 
-| Field | Rate date | Issue code |
-|---|---|---|
-| `ORDER.unit_price` | the order date (`order_ts`); if the ECB published nothing that day, the latest earlier rate | `FX_CONVERTED_AT_ORDER_DATE` |
-| `CUSTOMER.lifetime_spend` | the latest ECB rate published **before the run's date** (the run's rate snapshot). The signup date is not used: lifetime spend builds up over many purchases whose dates are unknown, so no single historical date is correct. The figure is approximate and the dashboard marks it with "≈". | `FX_CONVERTED_AT_RUN_DATE` |
+Foreign amounts preserve source amount and currency. Orders use the latest eligible ECB rate on or before the order date; lifetime spend uses the run snapshot. Missing rates create `FX_RATE_UNAVAILABLE` and prevent staging.
 
-Store the rate, the date it applies to and its source on the row, so a re-run gives the same result. If no rate is
-available, set the GBP value to null, keep the source amount, and raise `FX_RATE_UNAVAILABLE` (the row goes to human review).
-ORD-3003 is first repaired to a unit price (`$39.98` ÷ 2 = `$19.99`) and then converted.
+### 5.3 Dates
 
-### 5.3 Dates (`date`)
+Approved deterministic inputs:
 
-| Raw | Format | Regex | Parsed |
-|---|---|---|---|
-| `2023-05-12` | ISO `YYYY-MM-DD` | `^\d{4}-\d{2}-\d{2}$` | 2023-05-12 |
-| `01/22/2023` | US `MM/DD/YYYY` | `^\d{2}/\d{2}/\d{4}$` | 2023-01-22 |
-| `15-Jan-2024` | `DD-Mon-YYYY` | `^\d{2}-[A-Za-z]{3}-\d{4}$` | 2024-01-15 |
-| `2024/02/03 14:22:00` | `YYYY/MM/DD HH:MM:SS` | `^\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2}$` | 2024-02-03T14:22:00 (no timezone) |
-| ` 2023-08-01 ` | ISO, padded | trim first | 2023-08-01 |
-| *(empty)* | — | — | null |
-
-Slash dates `NN/NN/YYYY` are always month/day/year (US format). So `03/04/2023` = 4 March 2023. The format stays a supported input;
-parse it deterministically and don't flag it as ambiguous.
-
-### 5.4 Status normalisation
-
-| Record type | Raw → Canonical |
+| Raw form | Interpretation |
 |---|---|
-| CUSTOMER | `Active`, `ACTIVE`, `active` → `active`; `inactive` → `inactive`; `Y` → `active` (confirmed) |
-| PRODUCT | already canonical |
-| ORDER | already canonical; missing → null (flag it) |
+| `YYYY-MM-DD` | Date |
+| `MM/DD/YYYY` | US month/day/year date |
+| `DD-Mon-YYYY` | Named-month date |
+| `YYYY/MM/DD HH:MM:SS` | Local datetime with no timezone |
+| Padded approved form | Trim before parsing |
+| Empty field | Absent |
 
-### 5.5 Tags
+Slash dates with four-digit years are month/day/year, so `03/04/2023` means 4 March 2023.
 
-- Syntax: `^[a-z]+(\|[a-z]+)*$`, split on `|`.
-- Empty string or `N/A` → `[]`.
-- Tags are all lowercase in the sample. Normalise them to lowercase anyway.
+Observed forms outside the approved registry remain unresolved: `2024-01-10T15:30:00Z`, `3/15/24`, `01-02-2024`, `2024-02-20 09:15`, `2024.04.10`, `15.3.2023`, `2024-05-22 14:30:45.123`, `2023/12/15`, `2024-07-01 +00:00`, `2023.11.20`, `2024-08-15T10:00:00`, `unknown`, `2024-09-01 13:45`, and missing required order dates. They may become supported only through an explicit registered rule and corresponding unit test.
 
-### 5.6 Free text (`name`, `notes`)
+### 5.4 Statuses
 
-- Trim leading and trailing whitespace (`  Wei Zhang  `, ` Prefers SMS`).
-- Preserve internal punctuation, apostrophes, `&`, accents and newlines.
-- For **matching** only (not storage), compute a key: Unicode NFKC, then strip symbols and
-  emoji (category `So`), then collapse whitespace, then casefold.
-  This matches `Sofia Rossi 🌟` to `Sofia Rossi`.
+- Customer mappings: `Active`, `ACTIVE`, and `active` → `active`; `Inactive` and `inactive` → `inactive`; `Y` → `active`.
+- Product approved values: `in_stock`, `discontinued`, `pending_review`, `backordered`.
+- Order approved values: `pending`, `shipped`, `cancelled`, `refunded`.
 
----
+Unsupported values remain unresolved: customer `true`, `PENDING`, `unknown`; product empty, `out_of_stock`, `pre_order`; order empty, `in_transit`, `processing`, `backorder`, `returned`, `awaiting_shipment`, `completed`.
 
-## 6. Exception catalogue
+### 5.5 Tags and free text
 
-### 6.1 Structural
+Tags use `^[a-z]+(\|[a-z]+)*$`, are split on `|`, lowercased, and retain order. Empty and approved `N/A` become an empty list. Leading/trailing separators such as `|vip|` are malformed and require review.
 
-| Line(s) | Record | Issue | Effect on a strict parser | Recommended repair |
-|---|---|---|---|---|
-| 1 | header | UTF-8 BOM | first column named `﻿record_type` | open with `utf-8-sig` |
-| 13 | ORD-3004 | 7 fields; `status`, `tags`, `notes` missing | short row; pandas fills with NaN | pad with nulls and flag `status` missing |
-| 14 | CUST-1005 | 12 fields; `notes` contains unquoted commas | pandas raises `ParserError` | since `notes` is the last column, re-join fields 10…n with `,` → `Called twice, no answer, will retry next week` |
-| 15–16 | SKU-2005 | quoted field contains a newline | fine for RFC 4180 parsers, breaks line-based tools (`wc -l`, `grep`, `split`) | keep; escape as needed downstream |
-| 17 | ORD-3001 | exact duplicate of line 4 | double counting | deduplicate on the whole row, then check `id` is unique |
-| 18 | — | blank line | empty record | skip |
-| 19 | header | repeated header | read as a data row with `record_type = "record_type"` | skip any row equal to the header |
-| 24 | SKU-2007 | 11 fields; trailing comma | pandas raises `ParserError` | drop trailing fields if they are empty |
+Free text is trimmed only at its outer edges. Internal punctuation, commas, apostrophes, ampersands, accents, emoji, CJK and Arabic characters, and newlines are preserved.
 
-### 6.2 Semantic / value-level
+Matching keys are separate derived values: Unicode NFKC, removal of symbol-category characters such as emoji, whitespace collapse, then case-folding. The source/display value is never replaced by its match key. This resolves `Sofia Rossi` to `Sofia Rossi 🌟` and `Wei Zhang` to `  Wei Zhang  `. It does not justify transliteration or punctuation removal that the registered algorithm does not perform.
 
-| Line | Record | Field | Issue |
+## 6. Complete structural exception catalogue
+
+| Physical line(s) | Record | Raw shape | Required treatment |
 |---|---|---|---|
-| 2 | CUST-1001 | value | `$1,240.50`: USD (non-GBP exception) with thousands separator |
-| 5 | CUST-1002 | date | `01/22/2023`: US format (confirmed MM/DD/YYYY) |
-| 5 | CUST-1002 | status | `ACTIVE`: case variant |
-| 5 | CUST-1002 | tags | `N/A` null token |
-| 5 | CUST-1002 | notes | implicit FK to CUST-1001 in free text |
-| 6 | SKU-2002 | value | `45,00`: decimal comma |
-| 7 | ORD-3002 | quantity | `-1`: negative quantity confirmed to mean refund (1 unit refunded) |
-| 7 | ORD-3002 | notes | escaped `""` quotes |
-| 8 | CUST-1003 | value | `€2.345,00`: EUR (non-GBP exception) with EU number format |
-| 8 | CUST-1003 | date | `15-Jan-2024`: named month |
-| 8 | CUST-1003 | status | `inactive` but has an order dated 2024-02-03 (ORD-3003). Plausible, but worth checking |
-| 9 | SKU-2003 | value / quantity / date | `TBD` / `many` / empty: product not finalised |
-| 10 | ORD-3003 | value | `$39.98` (USD, non-GBP exception) violates unit-price rule (holds line total). Repair: ÷ qty 2 → 19.99. |
-| 10 | ORD-3003 | date | datetime with `/` separators, no timezone |
-| 11 | CUST-1004 | contact | `-` placeholder, so no email |
-| 11 | CUST-1004 | value | `1.5e3`: scientific notation |
-| 12 | SKU-00204 | id | 5-digit zero-padded SKU, typo. Repair: → `SKU-2004` (applied to PRODUCT and ORD-3004 reference). |
-| 12 | SKU-00204 | quantity | `-12`: negative stock (backorder), confirmed by notes |
-| 20 | CUST-1006 | name / value / date / notes | leading/trailing whitespace |
-| 20 | CUST-1006 | status | `Y`: confirmed to mean `active` |
-| 21 | SKU-2006 | value | `12.99 (10% off)`: annotation inside a numeric field |
-| 22 | ORD-3005 | value / quantity | `NULL` / `None` null tokens (the order was cancelled) |
-| 23 | CUST-1007 | name | emoji `🌟`, so the order name `Sofia Rossi` (line 25) doesn't match exactly |
-| 25 | ORD-3006 | status | `pending`, "awaiting stock", while SKU-2007 shows `in_stock` with 60 units. Minor contradiction |
+| 1 | Header | UTF-8 BOM | Recognise header using UTF-8-with-signature decoding; retain original bytes. |
+| 13 | `ORD-3004` | 7 fields | Preserve seven raw fields; candidate marks missing trailing status, tags, and notes absent and creates missing-status review. |
+| 14 | `CUST-1005` | 12 fields from unquoted note commas | Preserve all fields; approved last-column salvage joins fields 10–12 and records a lossy structural-repair issue. |
+| 15–16 | `SKU-2005` | Quoted multiline note | Store one raw record spanning both lines; preserve newline. |
+| 17 | `ORD-3001` | Exact duplicate of line 4 | Preserve both; later occurrence classifies `DUPLICATE`. |
+| 18 | — | Blank record | Preserve as `blank`. |
+| 19 | Header | Exact repeated header | Preserve as `repeated_header`; never classify as data. |
+| 24 | `SKU-2007` | 11 fields; extra trailing empty | Preserve 11 raw fields; deterministic trailing-empty salvage may create the ten-field candidate with provenance. |
+| 31 | `ORD-3008` | 11 fields; extra trailing empty | Preserve 11 raw fields; deterministic trailing-empty salvage may create the ten-field candidate with provenance. |
+| 36–37 | `SKU-2011` | Quoted multiline note | Store one raw record spanning both lines; preserve newline. |
+| 39 | `CUST-0012` | 9 fields with an apparent mid-row omission and shifted values | Preserve nine fields. Do not guess the missing column or realign values; create a rejected shell and structural-review item. |
+| 45 | — | Blank record | Preserve as `blank`. |
 
----
+All other data records contain ten parsed fields.
 
-## 7. Proposed normalised target schema
+## 7. Semantic exception catalogue
 
-Split the union into three typed tables:
+### 7.1 Original segment, lines 2–25
 
-```sql
-CREATE TABLE customer (
-  customer_id     TEXT PRIMARY KEY CHECK (customer_id ~ '^CUST-\d{4}$'),
-  name            TEXT NOT NULL,
-  email           TEXT,
-  lifetime_spend  NUMERIC(12,2),
-  currency        CHAR(3) NOT NULL DEFAULT 'GBP',
-  source_currency CHAR(3),               -- set only when converted from a non-GBP value
-  source_amount   NUMERIC(12,2),         -- set only when converted from a non-GBP value
-  fx_rate         NUMERIC(18,8),         -- source→GBP rate used (see §5.2)
-  fx_rate_date    DATE,                  -- ECB publication date of that rate
-  fx_source       TEXT,                  -- e.g. 'ECB'
-  signup_date     DATE,
-  status          TEXT CHECK (status IN ('active','inactive')),
-  tags            TEXT[] NOT NULL DEFAULT '{}',
-  notes           TEXT,
-  referred_by     TEXT REFERENCES customer(customer_id)   -- extracted from notes
-);
+| Line | Record | Field(s) | Observation and governed outcome |
+|---:|---|---|---|
+| 2 | `CUST-1001` | value | USD with thousands separator; convert at run snapshot and record FX provenance. |
+| 5 | `CUST-1002` | date, status, tags, notes | US date; status case mapping; `N/A` tags; referral to `CUST-1001` in text. |
+| 6 | `SKU-2002` | value | Decimal comma parses to GBP 45.00. |
+| 7 | `ORD-3002` | quantity, notes | Negative refund quantity; escaped quotes are normal CSV mechanics. |
+| 8 | `CUST-1003` | value, date, status | EUR localized amount; named-month date; inactive customer has later order, which is review evidence rather than an automatic contradiction repair. |
+| 9 | `SKU-2003` | value, quantity, date | Deferred price, unresolved integer, absent date; requires review. |
+| 10 | `ORD-3003` | value, date | USD line total repaired to unit price 19.99 before FX; supported slash datetime. |
+| 11 | `CUST-1004` | contact, value | Absent email placeholder; scientific-notation GBP value. |
+| 12–13 | `SKU-00204`, `ORD-3004` | SKU | Registered zero-padding repair maps both references to `SKU-2004` through appended revisions. |
+| 20 | `CUST-1006` | text, value, date, status | Outer whitespace trims; `Y` maps to active. |
+| 21 | `SKU-2006` | value | Price annotation is retained as metadata. |
+| 22 | `ORD-3005` | value, quantity | Approved null tokens on a cancelled order. |
+| 23, 25 | `CUST-1007`, `ORD-3006` | name | Match key relates name with and without emoji while preserving both values. |
+| 25 | `ORD-3006` | status/notes | Pending order versus in-stock product is retained as a reviewable minor contradiction. |
 
-CREATE TABLE product (
-  sku             TEXT PRIMARY KEY CHECK (sku ~ '^SKU-\d{4}$'),  -- SKU-00204 normalised to SKU-2004 on load
-  name            TEXT NOT NULL,
-  category        TEXT NOT NULL,
-  unit_price      NUMERIC(10,2),
-  price_note      TEXT,                  -- e.g. '10% off'
-  currency        CHAR(3) NOT NULL DEFAULT 'GBP',
-  stock_qty       INTEGER,               -- negative = backorder
-  listed_date     DATE,
-  status          TEXT CHECK (status IN ('in_stock','discontinued','pending_review','backordered')),
-  tags            TEXT[] NOT NULL DEFAULT '{}',
-  notes           TEXT
-);
+### 7.2 Expanded segment, lines 26–54
 
-CREATE TABLE "order" (
-  order_id        TEXT PRIMARY KEY CHECK (order_id ~ '^ORD-\d{4}$'),
-  customer_id     TEXT REFERENCES customer(customer_id), -- supplied directly in future exports; resolved by name for legacy files
-  customer_name_raw TEXT NOT NULL,
-  sku             TEXT NOT NULL REFERENCES product(sku) CHECK (sku ~ '^SKU-\d{4}$'),  -- SKU-00204 normalised to SKU-2004 on load
-  unit_price      NUMERIC(10,2),
-  quantity        INTEGER CHECK (quantity <> 0),         -- negative = refund
-  currency        CHAR(3) NOT NULL DEFAULT 'GBP',
-  source_currency CHAR(3),               -- set only when converted from a non-GBP value
-  source_amount   NUMERIC(12,2),         -- set only when converted from a non-GBP value
-  fx_rate         NUMERIC(18,8),         -- source→GBP rate used (see §5.2)
-  fx_rate_date    DATE,                  -- ECB publication date of that rate
-  fx_source       TEXT,                  -- e.g. 'ECB'
-  ordered_at      TIMESTAMP,             -- no timezone in source
-  status          TEXT CHECK (status IN ('pending','shipped','cancelled','refunded')),
-  tags            TEXT[] NOT NULL DEFAULT '{}',
-  notes           TEXT
-);
+| Line | Record | Field(s) | Observation and governed outcome |
+|---:|---|---|---|
+| 26 | `CUST-1008` | date, status, tags | ISO timestamp where a date is expected, unsupported `true`, and new `premium` tag; review. Umlaut is preserved. |
+| 27 | `SKU-2008` | value, status, tags | Discount prose in price, missing status, and new tags; price/status unresolved and review required. |
+| 28 | `ORD-3007` | date, status, tags, notes | Two-digit-year date, unsupported `in_transit`, new `overnight` tag, and line-total prose in notes; review. |
+| 29 | `CUST-1009` | value, date | Currency-code prefix and ambiguous hyphen date are unsupported; preserve CJK text and review. |
+| 30 | `SKU-00209` | id, category, value, date, notes | Zero-padded ID, new category, dual price, datetime in date field, and notes contradicting `in_stock`; no repair beyond a registered rule, so review. |
+| 31 | `ORD-3008` | sku, date, status, width | Depends on unresolved `SKU-00209`; dotted date and `processing` are unsupported; trailing empty field is structurally salvageable. |
+| 32 | `CUST-1010` | email, date | Two emails in one field and dotted date require review; accented/hyphenated name is preserved. |
+| 33 | `SKU-2010` | category, status | `Office` and `out_of_stock` are outside registered domains; stock is zero. Review without inventing a mapping. |
+| 34 | `ORD-3009` | value, date, status, tags | Zero unit price violates positivity; fractional-second datetime, `backorder`, and new tag are unsupported. |
+| 35 | `CUST-1011` | name, value, date, tags | Quoted comma in name is valid; GBP annotation is parseable; slash date and `na` tag are unsupported. |
+| 36–37 | `SKU-2011` | category, quantity, notes | Multi-category string and `5|in-stock` integer are unresolved; multiline note is valid CSV. |
+| 38 | `ORD-3010` | customer, date | Punctuation difference prevents the approved match-key algorithm from resolving `Johnson Michael` to `Johnson, Michael`; offset-like date is unsupported. |
+| 39 | `CUST-0012` | entire row | Mid-row omission shifts subsequent values. Reject the candidate shell for structural review; do not infer columns. |
+| 40 | `SKU-2012` | value, quantity/status, tags | Arithmetic price expression unresolved; `-8` conflicts with `discontinued`, which requires zero; new tag. |
+| 41 | `ORD-3011` | status, tags | Four-digit US slash date is supported; `returned` and `priority` are unsupported. |
+| 42 | `CUST-1013` | value, date | Saudi-riyal suffix format and dotted date are unsupported; Arabic name is preserved. |
+| 43 | `SKU-2013` | name, tags | Quoted commas are valid; new tags require vocabulary validation. |
+| 44 | `ORD-3012` | customer, date, tags | Transliteration cannot resolve to the Arabic customer through the approved match key; ISO datetime and new tag still require registered support/review. |
+| 46 | `CUST-1014` | value | Yen-symbol amount is outside the approved money parser and requires review; Japanese text is preserved. |
+| 47 | `SKU-2014` | category, value | New category and two alternative currency prices in one field are unresolved. |
+| 48 | `ORD-3013` | date, status | Slash datetime is supported; `awaiting_shipment` is not. |
+| 49 | `CUST-1015` | name, value, date, status | Placeholder-like name, negative lifetime spend, and `unknown` date/status require review. |
+| 50 | `SKU-2015` | status/stock | `pre_order` is unsupported; zero stock is evidence but does not authorize a mapping. |
+| 51 | `ORD-3014` | date, status | Required date and status are absent; customer name can match case-insensitively. Review. |
+| 52 | `CUST-1016` | value | Narrative MXN conversion cannot be parsed as one governed amount; preserve raw evidence and review. |
+| 53 | `SKU-2016` | category, tags | `Office` and `desk` are outside the current registered vocabularies; numeric/date/status fields otherwise parse. |
+| 54 | `ORD-3015` | date, status, tags | Space-separated minute datetime, `completed`, and `standard` lack registered mappings; review. |
+
+## 8. Relationship and duplicate expectations
+
+```text
+CUSTOMER (identity) 1 ──< ORDER (customer reference; legacy name-match fallback)
+PRODUCT  (identity) 1 ──< ORDER (SKU reference)
+CUSTOMER (identity) 1 ──< CUSTOMER (referral extracted from notes)
 ```
 
-Keep a side table `data_quality_issue(source_line, record_id, field, raw_value, issue_code)`
-for every coercion, so the original raw values stay auditable.
+- Exact duplication compares parsed raw field arrays within a run before normalisation and ignores source-line numbers.
+- Lines 4 and 17 are the only exact duplicate pair in this fixture.
+- Name matching is lossy and never overwrites raw names.
+- Unresolved product or customer relations block order readiness separately from the order's field verdict.
+- A repeated business ID with different fields is a conflict, not a duplicate.
+
+## 9. Golden-test expectations
+
+The golden integration test must verify:
+
+- the hash, byte count, physical-line count, logical-record count, and entity counts in section 1;
+- exact source spans for every raw record, including both multiline records;
+- the five non-ten-field rows and their exact field counts;
+- preservation of both headers, both blanks, and both duplicate occurrences;
+- one initial candidate or rejected shell for every data record;
+- one terminal classification per data record for the active rules version;
+- traceability from each staged or reviewed result to frozen bytes, raw fields, candidate revisions, transformations, issues, and classification;
+- idempotent equality of the final persisted graph after uninterrupted execution and after failure/retry at every batch boundary.
+
+Any change to the CSV requires an intentional update to its SHA-256, structural inventory, semantic catalogue, and golden-test expectations in the same change.
