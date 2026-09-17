@@ -16,3 +16,7 @@ class RunState(StrEnum):
     CLASSIFIED = "classified"
     LOADING = "loading"
     STAGED = "staged"
+
+
+class RunChainInvariantError(ValueError):
+    """Stored runs do not form one complete, unambiguous predecessor chain."""
