@@ -1,6 +1,7 @@
 """SQLAlchemy 2 mappings for frozen evidence and resumable pipeline state."""
 
 from datetime import date, datetime
+from decimal import Decimal
 from enum import StrEnum
 from uuid import UUID
 
@@ -11,6 +12,7 @@ from sqlalchemy import (
     Enum,
     ForeignKey,
     Index,
+    Numeric,
     String,
     UniqueConstraint,
     text,
@@ -319,7 +321,9 @@ class ClassificationResultModel(Base):
         ForeignKey("candidate_revision.id")
     )
     rules_version: Mapped[str]
-    fx_snapshot_id: Mapped[UUID | None]
+    fx_snapshot_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("fx_snapshot.id", name="fk_classification_fx_snapshot")
+    )
     verdict: Mapped[str]
     readiness: Mapped[str]
     evaluated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
@@ -392,3 +396,42 @@ class ReviewItemModel(Base):
     reasons: Mapped[list[object]] = mapped_column(JSONB)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     display_state: Mapped[str]
+
+
+class FxSnapshotModel(Base):
+    __tablename__ = "fx_snapshot"
+    __table_args__ = (
+        UniqueConstraint("manifest_hash", name="uq_fx_snapshot_manifest_hash"),
+        CheckConstraint("manifest_hash ~ '^[0-9a-f]{64}$'", name="ck_fx_snapshot_hash"),
+        CheckConstraint("source = 'ECB'", name="ck_fx_snapshot_source"),
+        CheckConstraint("length(source_url) > 0", name="ck_fx_snapshot_url"),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True)
+    manifest_hash: Mapped[str] = mapped_column(String(64))
+    effective_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    source: Mapped[str]
+    source_url: Mapped[str]
+
+
+class FxRateModel(Base):
+    __tablename__ = "fx_rate"
+    __table_args__ = (
+        CheckConstraint("currency ~ '^[A-Z]{3}$'", name="ck_fx_rate_currency"),
+        CheckConstraint(
+            "eur_reference_rate > 0 AND eur_reference_rate < 'Infinity'::numeric",
+            name="ck_fx_rate_positive_finite",
+        ),
+        CheckConstraint(
+            "currency <> 'EUR' OR eur_reference_rate = 1", name="ck_fx_rate_eur"
+        ),
+        CheckConstraint("length(source_url) > 0", name="ck_fx_rate_url"),
+    )
+
+    snapshot_id: Mapped[UUID] = mapped_column(
+        ForeignKey("fx_snapshot.id"), primary_key=True
+    )
+    currency: Mapped[str] = mapped_column(String(3), primary_key=True)
+    publication_date: Mapped[date] = mapped_column(primary_key=True)
+    eur_reference_rate: Mapped[Decimal] = mapped_column(Numeric())
+    source_url: Mapped[str]

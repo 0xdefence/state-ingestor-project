@@ -11,6 +11,7 @@ from services.application.derived_ports import (
     ClassificationRepository,
     ReviewRepository,
 )
+from services.application.fx_ports import FxRepository
 from services.application.ports import (
     CheckpointRepository,
     EventRepository,
@@ -78,6 +79,10 @@ class SqlAlchemyUnitOfWork:
     @property
     def reviews(self) -> ReviewRepository:
         return self.repositories.reviews
+
+    @property
+    def fx(self) -> FxRepository:
+        return self.repositories.fx
 
     def __enter__(self) -> Self:
         if self._session is not None:

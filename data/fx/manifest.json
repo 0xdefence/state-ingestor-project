@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "source": "ECB",
+  "source_url": "https://data-api.ecb.europa.eu/service/data/EXR/D.USD+GBP.EUR.SP00.A?startPeriod=2023-03-30&endPeriod=2026-09-16&format=csvdata",
+  "retrieved_on": "2026-09-17",
+  "provenance": "Exact unmodified HTTP response from the European Central Bank Data API; daily EUR reference rates. No runtime download.",
+  "sha256": "62a477712bca8d4369fb6440a25c69b04423f30bceb42e6bb7fc5d7f364d0e3c",
+  "byte_size": 377306,
+  "format": "ECB-SDMX-CSV",
+  "encoding": "utf-8",
+  "base_currency": "EUR",
+  "effective_at": "2026-09-16T12:00:00+00:00",
+  "coverage": {
+    "start": "2023-03-30",
+    "end": "2026-09-16",
+    "currencies": [
+      "GBP",
+      "USD"
+    ],
+    "rate_count": 1768
+  },
+  "selection": "Daily GBP and USD observations from 2023-03-30 through the fixed run date 2026-09-16; includes a publication before the earliest fixture order (2023-04-02). EUR is the implicit unit base. Other currencies remain unavailable."
+}

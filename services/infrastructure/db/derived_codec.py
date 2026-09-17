@@ -21,6 +21,7 @@ from services.domain.candidates import (
     RejectedCandidateShell,
 )
 from services.domain.fields import CandidateField, FieldState, SourceRef
+from services.domain.fx import FxEvidence
 from services.domain.issues import ReviewReason
 
 _CLASSES: dict[str, Callable[..., object]] = {
@@ -31,6 +32,7 @@ _CLASSES: dict[str, Callable[..., object]] = {
         OrderCandidate,
         RejectedCandidateShell,
         Money,
+        FxEvidence,
         SourceRef,
         CandidateField,
         ReviewReason,

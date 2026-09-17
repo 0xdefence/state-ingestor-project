@@ -20,6 +20,7 @@ from services.infrastructure.db.derived_repositories import (
     SqlAlchemyClassificationRepository,
     SqlAlchemyReviewRepository,
 )
+from services.infrastructure.db.fx_repository import SqlAlchemyFxRepository
 from services.infrastructure.db.repositories import (
     SqlAlchemyCheckpointRepository,
     SqlAlchemyEventRepository,
@@ -97,6 +98,7 @@ def _repositories(session: Session) -> Repositories:
         SqlAlchemyCandidateRepository(session),
         SqlAlchemyClassificationRepository(session),
         SqlAlchemyReviewRepository(session),
+        SqlAlchemyFxRepository(session),
     )
 
 

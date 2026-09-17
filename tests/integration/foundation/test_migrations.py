@@ -31,6 +31,7 @@ from services.infrastructure.db.derived_repositories import (
     SqlAlchemyClassificationRepository,
     SqlAlchemyReviewRepository,
 )
+from services.infrastructure.db.fx_repository import SqlAlchemyFxRepository
 from services.infrastructure.db.models import RunModel
 from services.infrastructure.db.uow import SqlAlchemyUnitOfWork
 
@@ -240,6 +241,7 @@ def unused_repositories(session: Session) -> Repositories:
         candidates=SqlAlchemyCandidateRepository(session),
         classifications=SqlAlchemyClassificationRepository(session),
         reviews=SqlAlchemyReviewRepository(session),
+        fx=SqlAlchemyFxRepository(session),
     )
 
 

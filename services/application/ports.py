@@ -12,6 +12,7 @@ from services.application.derived_ports import (
     ClassificationRepository,
     ReviewRepository,
 )
+from services.application.fx_ports import FxRepository
 from services.domain.raw import RawRecord
 from services.domain.runs import RunState
 
@@ -152,9 +153,12 @@ class Repositories:
     candidates: CandidateRepository
     classifications: ClassificationRepository
     reviews: ReviewRepository
+    fx: FxRepository
 
 
 class UnitOfWork(Protocol):
+    @property
+    def fx(self) -> FxRepository: ...
     @property
     def candidates(self) -> CandidateRepository: ...
     @property

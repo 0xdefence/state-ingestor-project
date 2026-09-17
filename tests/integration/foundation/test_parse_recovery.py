@@ -19,6 +19,7 @@ from services.infrastructure.db.derived_repositories import (
     SqlAlchemyClassificationRepository,
     SqlAlchemyReviewRepository,
 )
+from services.infrastructure.db.fx_repository import SqlAlchemyFxRepository
 from services.infrastructure.db.models import (
     PipelineEventModel,
     RawRecordModel,
@@ -51,6 +52,7 @@ def repositories(session: Session) -> Repositories:
         SqlAlchemyCandidateRepository(session),
         SqlAlchemyClassificationRepository(session),
         SqlAlchemyReviewRepository(session),
+        SqlAlchemyFxRepository(session),
     )
 
 

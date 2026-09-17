@@ -7,6 +7,7 @@ from enum import StrEnum
 from uuid import UUID
 
 from services.domain.fields import CandidateField, FieldState, SourceRef
+from services.domain.fx import FxEvidence
 from services.domain.ids import deterministic_id
 
 
@@ -103,7 +104,9 @@ class RejectedCandidateShell:
 type CandidatePayload = (
     CustomerCandidate | ProductCandidate | OrderCandidate | RejectedCandidateShell
 )
-type FieldValue = str | int | Decimal | date | datetime | Money | tuple[str, ...]
+type FieldValue = (
+    str | int | Decimal | date | datetime | Money | FxEvidence | tuple[str, ...]
+)
 # CandidateField is invariant because its constructor also consumes T. This union
 # lets evidence retain each field's precise type without casts in pipeline code.
 type EvidenceField = (
@@ -114,6 +117,7 @@ type EvidenceField = (
     | CandidateField[datetime]
     | CandidateField[date | datetime]
     | CandidateField[Money]
+    | CandidateField[FxEvidence]
     | CandidateField[tuple[str, ...]]
     | CandidateField[FieldValue]
 )

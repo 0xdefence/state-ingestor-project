@@ -1,0 +1,2 @@
+# Preserve the SHA-256 identity of the exact ECB CSV response, including CRLF.
+data/fx/ecb-history.csv -text whitespace=cr-at-eol

@@ -39,6 +39,7 @@ from services.infrastructure.db.derived_repositories import (
     SqlAlchemyClassificationRepository,
     SqlAlchemyReviewRepository,
 )
+from services.infrastructure.db.fx_repository import SqlAlchemyFxRepository
 from services.infrastructure.db.models import (
     RawRecordModel,
     RunModel,
@@ -100,6 +101,7 @@ def repositories(session: Session) -> Repositories:
         SqlAlchemyCandidateRepository(session),
         SqlAlchemyClassificationRepository(session),
         SqlAlchemyReviewRepository(session),
+        SqlAlchemyFxRepository(session),
     )
 
 
@@ -154,6 +156,7 @@ def test_concurrent_identical_ingests_create_one_run(
             bundle.candidates,
             bundle.classifications,
             bundle.reviews,
+            bundle.fx,
         )
 
     def submit(name: str) -> IngestResult:
