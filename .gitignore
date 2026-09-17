@@ -1,3 +1,10 @@
 .worktrees/
 .superpowers/sdd/
 __pycache__/
+.venv/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.pyright/
+.env
+var/sources/
