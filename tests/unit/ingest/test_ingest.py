@@ -309,10 +309,9 @@ def test_duplicate_completed_run_performs_no_pipeline_work(
     assert len(uow.sources.occurrences) == len(uow.runs.links) == 2
 
 
-def test_duplicate_incomplete_run_resumes_when_processing_requested(
+def test_duplicate_incomplete_run_returns_resume_metadata_without_processing(
     setup: tuple[MemoryUow, FilesystemSourceStore, FixedClock],
 ) -> None:
-    # Task 4 returns durable metadata; Task 6 consumes it to dispatch retry_run.
     uow, store, clock = setup
     first = ingest_file(command(), uow, store, clock)
     uow.runs.set_state(first.run_id, RunState.PARSING, stage_failure="parse_failed")
@@ -369,3 +368,79 @@ def test_failed_freeze_opens_no_transaction(
         )
     assert uow.entries == 0
     assert not uow.sources.files
+
+
+@pytest.mark.parametrize("payload", [b'ORDER,"unterminated', b"\xff\xfe\x00"])
+def test_ingest_does_not_interpret_csv(tmp_path: Path, payload: bytes) -> None:
+    from services.application.process import ingest_and_process
+    from tests.unit.pipeline.test_parse import FixedClock, ParseMemoryDatabase
+
+    database = ParseMemoryDatabase()
+    store = FilesystemSourceStore(tmp_path)
+    result = ingest_and_process(
+        command(content=payload), database.factory, store, FixedClock(), process=False
+    )
+    assert database.runs.get(result.run_id).state == RunState.INGESTED
+    assert not database.raw_records.rows
+    assert not database.events.rows
+    with store.open(database.sources.get(result.source_file_id).locator) as source:
+        assert source.read() == payload
+
+
+def test_processing_new_run_and_completed_duplicate(tmp_path: Path) -> None:
+    from services.application.process import ingest_and_process
+    from tests.unit.pipeline.test_parse import FixedClock, ParseMemoryDatabase
+
+    database = ParseMemoryDatabase()
+    store = FilesystemSourceStore(tmp_path)
+    first = ingest_and_process(
+        command(), database.factory, store, FixedClock(), process=True, batch_size=1
+    )
+    assert database.runs.get(first.run_id).state == RunState.PARSED
+    assert len(database.raw_records.rows) == 2
+    database.runs.set_state(first.run_id, RunState.STAGED)
+    events = list(database.events.rows)
+    duplicate = ingest_and_process(
+        command("duplicate.csv"), database.factory, store, FixedClock(), process=True
+    )
+    assert duplicate.run_id == first.run_id
+    assert database.runs.get(first.run_id).state == RunState.STAGED
+    assert database.events.rows == events
+
+
+def test_duplicate_incomplete_run_resumes_when_processing_requested(
+    tmp_path: Path,
+) -> None:
+    from services.application.process import ingest_and_process, parse_run
+    from tests.unit.pipeline.test_parse import (
+        RECOVERY_BYTES,
+        FixedClock,
+        fail_second_batch,
+        prepared_run,
+    )
+
+    database, store, run_id = prepared_run(tmp_path)
+    with pytest.raises(RuntimeError):
+        parse_run(
+            run_id, 2, database.factory, store, fail_second_batch, clock=FixedClock()
+        )
+    result = ingest_and_process(
+        command("retry.csv", content=RECOVERY_BYTES),
+        database.factory,
+        store,
+        FixedClock(),
+        process=True,
+        batch_size=2,
+    )
+    assert result.run_id == run_id and result.run_reused
+    assert result.resume_from_checkpoint is not None
+    assert result.resume_from_checkpoint.record_ordinal == 2
+    assert len(database.runs.rows) == 1
+    assert len(database.raw_records.rows) == 5
+    assert database.runs.get(run_id).state == RunState.PARSED
+    assert [e.event_type for e in database.events.rows].count("stage_retried") == 1
+    assert [
+        e.facts["record_ordinal"]
+        for e in database.events.rows
+        if e.event_type == "batch_committed"
+    ] == [2, 4, 5]

@@ -1,7 +1,9 @@
 """Transaction-bound PostgreSQL repositories for source and run commands."""
 
+from collections.abc import Mapping, Sequence
 from dataclasses import asdict
 from hashlib import sha256
+from typing import cast
 from uuid import UUID
 
 from sqlalchemy import func, or_, select
@@ -10,15 +12,19 @@ from sqlalchemy.orm import Session
 
 from services.application.ports import (
     PipelineCheckpoint,
+    PipelineEvent,
     Run,
     RunSourceOccurrence,
     SourceFile,
     SourceOccurrence,
     Stage,
 )
+from services.domain.raw import RawRecord
 from services.domain.runs import RunChainInvariantError, RunState
 from services.infrastructure.db.models import (
     PipelineCheckpointModel,
+    PipelineEventModel,
+    RawRecordModel,
     RunModel,
     RunSourceOccurrenceModel,
     SourceFileModel,
@@ -227,3 +233,62 @@ class SqlAlchemyCheckpointRepository:
                 },
             )
         )
+
+
+def _json_value(value: object) -> object:
+    """Thaw immutable domain metadata only at the JSON persistence boundary."""
+    if isinstance(value, Mapping):
+        mapping = cast(Mapping[str, object], value)
+        return {key: _json_value(item) for key, item in mapping.items()}
+    if isinstance(value, tuple):
+        sequence = cast(tuple[object, ...], value)
+        return [_json_value(item) for item in sequence]
+    return value
+
+
+class SqlAlchemyRawRecordRepository:
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    def add_batch(self, records: Sequence[RawRecord]) -> None:
+        for record in records:
+            values: dict[str, object] = {
+                "id": record.id,
+                "run_id": record.run_id,
+                "source_line_start": record.source_line_start,
+                "source_line_end": record.source_line_end,
+                "kind": record.kind,
+                "fields": list(record.fields),
+                "field_count": record.field_count,
+                "parse_metadata": _json_value(record.parse_metadata),
+            }
+            inserted = self._session.scalar(
+                insert(RawRecordModel)
+                .values(**values)
+                .on_conflict_do_nothing(index_elements=[RawRecordModel.id])
+                .returning(RawRecordModel.id)
+            )
+            if inserted is None:
+                row = self._session.scalars(
+                    select(RawRecordModel).where(RawRecordModel.id == record.id)
+                ).one()
+                persisted = RawRecord(
+                    row.id,
+                    row.run_id,
+                    row.source_line_start,
+                    row.source_line_end,
+                    row.kind,
+                    tuple(row.fields),
+                    row.field_count,
+                    row.parse_metadata,
+                )
+                if persisted != record:
+                    raise ValueError(f"Raw record identity mismatch: {record.id}")
+
+
+class SqlAlchemyEventRepository:
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    def append(self, event: PipelineEvent) -> None:
+        self._session.add(PipelineEventModel(**asdict(event)))

@@ -1,0 +1,256 @@
+"""Checkpointed parsing and application-level ingest/process composition."""
+
+from collections.abc import Callable, Generator
+from contextlib import closing
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from itertools import islice
+from typing import cast
+from uuid import UUID, uuid4
+
+from services.application.ingest import IngestFile, IngestResult, ingest_file
+from services.application.ports import (
+    Clock,
+    PipelineCheckpoint,
+    PipelineEvent,
+    SourceStore,
+    UnitOfWork,
+)
+from services.domain.raw import RawRecord
+from services.domain.runs import RunState
+from services.pipeline.parse import parse_records
+
+UnitOfWorkFactory = Callable[[], UnitOfWork]
+FailureInjector = Callable[[int], None]
+_PARSE_STATES = frozenset((RunState.INGESTED, RunState.PARSING))
+_PARSE_COMPLETE_STATES = frozenset(
+    (
+        RunState.PARSED,
+        RunState.NORMALISING,
+        RunState.NORMALISED,
+        RunState.CLASSIFYING,
+        RunState.CLASSIFIED,
+        RunState.LOADING,
+        RunState.STAGED,
+    )
+)
+
+
+@dataclass(frozen=True, slots=True)
+class ProcessRun:
+    run_id: UUID
+    batch_size: int = 1000
+
+
+@dataclass(frozen=True, slots=True)
+class RetryRun:
+    run_id: UUID
+    batch_size: int = 1000
+
+
+@dataclass(frozen=True, slots=True)
+class StageResult:
+    run_id: UUID
+    record_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class RunResult:
+    run_id: UUID
+    state: RunState
+    parse: StageResult
+
+
+class _SystemClock:
+    def now(self) -> datetime:
+        return datetime.now(UTC)
+
+
+def _event(
+    uow: UnitOfWork,
+    run_id: UUID,
+    event_type: str,
+    facts: dict[str, object],
+    clock: Clock,
+) -> None:
+    uow.events.append(
+        PipelineEvent(uuid4(), run_id, "parse", event_type, facts, clock.now())
+    )
+
+
+def parse_run(
+    run_id: UUID,
+    batch_size: int,
+    uow_factory: UnitOfWorkFactory,
+    source_store: SourceStore,
+    failure_injector: FailureInjector | None = None,
+    *,
+    clock: Clock | None = None,
+) -> StageResult:
+    """Commit logical-record batches, reopening immutable bytes on every attempt.
+
+    Errors propagate after a separate transaction records the stage failure.
+    The injector runs after batch writes and immediately before their commit.
+    Completion is its own transaction, so an interruption after the final batch
+    is recoverable without replaying evidence. Run counts belong to classification
+    and are deliberately not populated by this stage.
+    """
+    if batch_size < 1:
+        raise ValueError("batch_size must be positive")
+    stage_clock = clock if clock is not None else _SystemClock()
+    with uow_factory() as uow:
+        run = uow.runs.get(run_id)
+        checkpoint = uow.checkpoints.get(run_id, "parse")
+        ordinal = checkpoint.record_ordinal if checkpoint else 0
+        batch_number = checkpoint.batch_number if checkpoint else 0
+        if run.state in _PARSE_COMPLETE_STATES:
+            return StageResult(run_id, ordinal)
+        if run.state not in _PARSE_STATES or run.stage_failure not in (
+            None,
+            "parse_failed",
+        ):
+            raise ValueError(f"Run cannot enter parse from {run.state}")
+        source = uow.sources.get(run.source_file_id)
+        uow.runs.set_state(run_id, RunState.PARSING)
+        _event(
+            uow,
+            run_id,
+            "stage_retried" if run.state == RunState.PARSING else "stage_started",
+            {"record_ordinal": ordinal, "batch_number": batch_number},
+            stage_clock,
+        )
+        uow.commit()
+
+    try:
+        with source_store.open(source.locator) as binary:
+            # Explicitly close the generator before the borrowed stream closes,
+            # including failure paths where csv.reader still owns a text wrapper.
+            with closing(
+                cast(Generator[RawRecord, None, None], parse_records(binary, run_id))
+            ) as records:
+                for _ in range(ordinal):
+                    if next(records, None) is None:
+                        raise ValueError("Parse checkpoint exceeds frozen source")
+                while batch := list(islice(records, batch_size)):
+                    next_ordinal = ordinal + len(batch)
+                    next_batch = batch_number + 1
+                    with uow_factory() as uow:
+                        uow.raw_records.add_batch(batch)
+                        uow.checkpoints.advance(
+                            PipelineCheckpoint(
+                                run_id,
+                                "parse",
+                                next_batch,
+                                next_ordinal,
+                                batch[-1].id,
+                                stage_clock.now(),
+                            )
+                        )
+                        _event(
+                            uow,
+                            run_id,
+                            "batch_committed",
+                            {
+                                "batch_number": next_batch,
+                                "record_ordinal": next_ordinal,
+                                "record_count": len(batch),
+                            },
+                            stage_clock,
+                        )
+                        if failure_injector is not None:
+                            failure_injector(next_batch)
+                        uow.commit()
+                    ordinal, batch_number = next_ordinal, next_batch
+        with uow_factory() as uow:
+            uow.runs.set_state(run_id, RunState.PARSED)
+            _event(
+                uow,
+                run_id,
+                "stage_completed",
+                {"record_ordinal": ordinal, "batch_number": batch_number},
+                stage_clock,
+            )
+            uow.commit()
+    except Exception as error:
+        with uow_factory() as uow:
+            # Read durable state rather than relying on in-memory progress after
+            # a failed commit. Earlier batches are never part of this rollback.
+            checkpoint = uow.checkpoints.get(run_id, "parse")
+            uow.runs.set_state(run_id, RunState.PARSING, stage_failure="parse_failed")
+            _event(
+                uow,
+                run_id,
+                "stage_failed",
+                {
+                    "record_ordinal": checkpoint.record_ordinal if checkpoint else 0,
+                    "batch_number": checkpoint.batch_number if checkpoint else 0,
+                    "error_type": type(error).__name__,
+                    "message": str(error),
+                },
+                stage_clock,
+            )
+            uow.commit()
+        raise
+    return StageResult(run_id, ordinal)
+
+
+def process_run(
+    command: ProcessRun,
+    uow_factory: UnitOfWorkFactory,
+    source_store: SourceStore,
+    clock: Clock,
+) -> RunResult:
+    """Run the implemented parse stage; subsequent stages have separate owners."""
+    parsed = parse_run(
+        command.run_id, command.batch_size, uow_factory, source_store, clock=clock
+    )
+    with uow_factory() as uow:
+        run = uow.runs.get(command.run_id)
+    return RunResult(run.id, run.state, parsed)
+
+
+def retry_run(
+    command: RetryRun,
+    uow_factory: UnitOfWorkFactory,
+    source_store: SourceStore,
+    clock: Clock,
+) -> RunResult:
+    with uow_factory() as uow:
+        run = uow.runs.get(command.run_id)
+        if run.stage_failure not in (None, "parse_failed"):
+            raise NotImplementedError("Only parse-stage recovery is implemented")
+    return process_run(
+        ProcessRun(command.run_id, command.batch_size), uow_factory, source_store, clock
+    )
+
+
+def ingest_and_process(
+    command: IngestFile,
+    uow_factory: UnitOfWorkFactory,
+    source_store: SourceStore,
+    clock: Clock,
+    *,
+    process: bool = False,
+    batch_size: int = 1000,
+) -> IngestResult:
+    """Compose ingest with explicit processing, reusing the existing run on retry."""
+    result = ingest_file(command, uow_factory(), source_store, clock)
+    if process:
+        with uow_factory() as uow:
+            run = uow.runs.get(result.run_id)
+        if run.state != RunState.STAGED:
+            if result.run_reused:
+                retry_run(
+                    RetryRun(result.run_id, batch_size),
+                    uow_factory,
+                    source_store,
+                    clock,
+                )
+            else:
+                process_run(
+                    ProcessRun(result.run_id, batch_size),
+                    uow_factory,
+                    source_store,
+                    clock,
+                )
+    return result
