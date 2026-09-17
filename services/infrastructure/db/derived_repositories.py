@@ -335,6 +335,11 @@ class SqlAlchemyClassificationRepository:
         )
 
     def add_duplicate(self, duplicate: DuplicateRelation) -> None:
+        existing = self._session.get(DuplicateRelationModel, duplicate.id)
+        if existing is not None:
+            if not evidence_equal(_duplicate(existing), duplicate):
+                raise ValueError("Duplicate identity mismatch")
+            return
         self._session.add(
             DuplicateRelationModel(
                 id=duplicate.id,

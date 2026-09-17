@@ -1,6 +1,6 @@
 """Complete-graph classification; one transaction after the revision-1 barrier."""
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, fields, replace
 from uuid import UUID
 
 from services.application.ports import Clock, UnitOfWork
@@ -9,10 +9,11 @@ from services.domain.candidates import (
     OrderCandidate,
     RejectedCandidateShell,
 )
-from services.domain.fields import SourceRef
+from services.domain.fields import CandidateField, SourceRef
 from services.domain.ids import deterministic_id
 from services.domain.issues import (
     ClassificationResult,
+    ComparisonScope,
     DataQualityIssue,
     DependencyKind,
     DependencyRecord,
@@ -24,6 +25,7 @@ from services.domain.issues import (
     Severity,
     Verdict,
 )
+from services.domain.observations import PriorObservation
 from services.domain.runs import RunState
 from services.pipeline.rules.base import RunCandidateGraph
 from services.pipeline.rules.registry import RuleRegistry
@@ -48,6 +50,13 @@ def classify_graph(
     graph: RunCandidateGraph, registry: RuleRegistry
 ) -> ClassificationSummary:
     graph = registry.apply(graph)
+    duplicate_raws = {
+        d.later_raw_id
+        for d in graph.duplicates
+        if d.comparison_scope == ComparisonScope.SAME_RUN
+    }
+    observed = {r.candidate_revision_id for r in graph.reobservations}
+    comparison_refs = {c.issue_id: c.conflict_refs for c in graph.comparisons}
     verdicts: dict[UUID, Verdict] = {}
     reasons: dict[UUID, list[ReviewReason]] = {}
     for revision in graph.terminal:
@@ -57,10 +66,18 @@ def classify_graph(
         issues = [i for i in graph.issues if i.candidate_revision_id in chain]
         reviewable = [i for i in issues if i.severity != Severity.INFO]
         reasons[revision.id] = [
-            ReviewReason(i.id, i.field_path, i.summary, i.source_refs)
+            ReviewReason(
+                i.id,
+                i.field_path,
+                i.summary,
+                i.source_refs,
+                conflict_refs=comparison_refs.get(i.id, ()),
+            )
             for i in reviewable
         ]
-        if isinstance(revision.payload, RejectedCandidateShell):
+        if revision.raw_record_id in duplicate_raws:
+            verdict = Verdict.DUPLICATE
+        elif isinstance(revision.payload, RejectedCandidateShell):
             verdict = Verdict.REJECTED
         elif reviewable:
             verdict = Verdict.NEEDS_REVIEW
@@ -104,6 +121,8 @@ def classify_graph(
                 else Readiness.INELIGIBLE
             )
         )
+        if revision.id in observed:
+            readiness = Readiness.INELIGIBLE
         snapshot_id = graph.fx_snapshot.id if graph.fx_snapshot else None
         result = ClassificationResult(
             deterministic_id(
@@ -191,7 +210,12 @@ def classify_graph(
 
 
 def classify_run(
-    run_id: UUID, registry: RuleRegistry, uow: UnitOfWork, clock: Clock
+    run_id: UUID,
+    registry: RuleRegistry,
+    uow: UnitOfWork,
+    clock: Clock,
+    *,
+    prior_observations: tuple[PriorObservation, ...] = (),
 ) -> ClassificationSummary:
     with uow:
         run = uow.runs.get(run_id)
@@ -200,13 +224,36 @@ def classify_run(
         raw = uow.raw_records.for_run(run_id)
         revisions = uow.candidates.for_run(run_id)
         initial = tuple(r for r in revisions if r.revision_number == 1)
-        graph = RunCandidateGraph(run_id, raw, initial, None, clock.now())
+        graph = RunCandidateGraph(
+            run_id,
+            raw,
+            initial,
+            None,
+            clock.now(),
+            prior_observations=prior_observations,
+        )
         # No writer, including state/event writers, is reached before this check.
         graph.check_barrier()
+        # Frozen initial payload refs identify normalization evidence. Validation
+        # may also attach issues to revision 1; those are recomputed and verified.
+        normalization_issues: set[UUID] = set()
+        for revision in initial:
+            if isinstance(revision.payload, RejectedCandidateShell):
+                normalization_issues.update(revision.payload.issue_refs)
+            else:
+                for item in fields(revision.payload):
+                    value: object = getattr(revision.payload, item.name)
+                    if isinstance(value, CandidateField):
+                        normalization_issues.update(value.issue_refs)
         graph = replace(
             graph,
             fx_snapshot=uow.fx.get(run.fx_snapshot_id) if run.fx_snapshot_id else None,
-            issues=tuple(i for r in initial for i in uow.candidates.issues(r.id)),
+            issues=tuple(
+                i
+                for r in initial
+                for i in uow.candidates.issues(r.id)
+                if i.id in normalization_issues
+            ),
             transformations=tuple(
                 t for r in initial for t in uow.candidates.transformations(r.id)
             ),
@@ -227,6 +274,8 @@ def classify_run(
             uow.classifications.add(result)
         for dependency in summary.dependencies:
             uow.classifications.add_dependency(dependency)
+        for duplicate in summary.graph.duplicates:
+            uow.classifications.add_duplicate(duplicate)
         for review in summary.reviews:
             uow.reviews.add(review)
         uow.runs.complete_classification(run_id, registry.rules_version, summary.counts)

@@ -14,6 +14,7 @@ from services.pipeline.rules.base import (
     apply_effects,
 )
 from services.pipeline.rules.domains import TerminalDomainConfig, terminal_domains
+from services.pipeline.rules.duplicates import comparisons
 from services.pipeline.rules.invariants import refund_invariant, stock_invariant
 from services.pipeline.rules.relationships import REFERRAL_PATTERN, relationships
 from services.pipeline.rules.repairs import (
@@ -148,6 +149,9 @@ def default_registry(
                 partial(terminal_domains, config=domain_config),
                 35,
                 domain_config.parameters,
+            ),
+            RuleDefinition(
+                "OBSERVATION_COMPARISONS", 1, False, _always, comparisons, 38
             ),
             RuleDefinition(
                 "RELATIONSHIPS",

@@ -6,9 +6,12 @@ from services.domain.candidates import (
     ProductCandidate,
 )
 from services.domain.fields import SourceRef
-from services.domain.ids import deterministic_id
 from services.domain.issues import DataQualityIssue, IssueCode, Severity
-from services.pipeline.rules.base import RuleEffect, RunCandidateGraph
+from services.pipeline.rules.base import (
+    RuleEffect,
+    RunCandidateGraph,
+    classification_evidence_id,
+)
 
 
 def validation_issue(
@@ -23,7 +26,7 @@ def validation_issue(
         revision.id,
         issues=(
             DataQualityIssue(
-                deterministic_id(revision.id, graph.rules_version, code, path),
+                classification_evidence_id(graph, revision.id, code, path),
                 revision.id,
                 code,
                 Severity.ERROR,

@@ -48,7 +48,7 @@ def relationships(graph: RunCandidateGraph) -> tuple[RuleEffect, ...]:
         dependencies: list[CandidateDependency] = []
         for kind, display, key in references:
             matches: list[CandidateRevision] = []
-            for target in graph.terminal:
+            for target in graph.distinct_terminal:
                 candidate = target.payload
                 if key is None or not key:
                     continue

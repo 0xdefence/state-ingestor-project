@@ -436,3 +436,184 @@ def test_line_total_provenance_names_quantity_and_product_basis():
         (outcome.graph.raw_records[1].id, 4),
         (outcome.graph.raw_records[1].id, 5),
     }
+
+
+def test_exact_duplicate_compares_parsed_fields():
+    outcome = assess(CUSTOMER + CUSTOMER)
+    assert [r.verdict for r in outcome.results] == [Verdict.CLEAN, Verdict.DUPLICATE]
+    assert [r.readiness for r in outcome.results] == [
+        Readiness.ELIGIBLE,
+        Readiness.INELIGIBLE,
+    ]
+    assert len(outcome.graph.raw_records) == len(outcome.graph.terminal) == 2
+    assert len([r for r in outcome.graph.revisions if r.revision_number == 1]) == 2
+    (relation,) = outcome.graph.duplicates
+    assert relation.comparison_scope.value == "same_run"
+    assert relation.earlier_raw_id == outcome.graph.raw_records[0].id
+    assert relation.later_raw_id == outcome.graph.raw_records[1].id
+    assert outcome.reviews[0].reasons[0].conflict_refs == (relation.earlier_raw_id,)
+
+
+def test_quoting_difference_can_still_be_duplicate():
+    outcome = assess(CUSTOMER + CUSTOMER.replace("Sofia Rossi 🌟", '"Sofia Rossi 🌟"'))
+    assert outcome.results[1].verdict == Verdict.DUPLICATE
+
+
+@pytest.mark.parametrize("name", [" Sofia Rossi 🌟 ", "Sofia  Rossi 🌟"])
+def test_value_whitespace_prevents_exact_duplicate(name):
+    outcome = assess(CUSTOMER + CUSTOMER.replace("Sofia Rossi 🌟", name))
+    assert outcome.results[1].verdict == Verdict.NEEDS_REVIEW
+    assert not outcome.graph.duplicates
+    assert any(i.code == IssueCode.BUSINESS_KEY_CONFLICT for i in outcome.graph.issues)
+
+
+def test_same_run_business_id_with_different_fields_is_conflict():
+    outcome = assess(CUSTOMER + CUSTOMER.replace(",100,", ",101,"))
+    assert [r.verdict for r in outcome.results] == [Verdict.CLEAN, Verdict.NEEDS_REVIEW]
+    assert outcome.graph.terminal[0].payload.lifetime_spend.value.amount == Decimal(
+        "100"
+    )
+    assert outcome.graph.terminal[1].payload.lifetime_spend.value.amount == Decimal(
+        "101"
+    )
+    assert outcome.reviews[0].reasons[0].conflict_refs == (
+        outcome.graph.raw_records[0].id,
+    )
+
+
+def prior_graph(csv=PRODUCT, *, prior_csv=PRODUCT, prior_stock=None):
+    from services.domain.observations import PriorObservation
+    from services.pipeline.classify import classify_graph
+    from services.pipeline.rules.registry import default_registry
+
+    previous = graph_for(prior_csv)
+    prior = classify_graph(previous, default_registry()).graph.terminal[0]
+    if prior_stock is not None:
+        prior = replace(
+            prior,
+            payload=replace(
+                prior.payload,
+                stock_qty=replace(prior.payload.stock_qty, value=prior_stock),
+            ),
+        )
+    next_run = UUID("8477a0e6-7858-46b9-b8d9-8d2a7c018277")
+    raw = tuple(parse_records(BytesIO(csv.encode()), next_run))
+    normalized = tuple(
+        build_initial_candidate(r, NormaliseContext(FixedClock())) for r in raw
+    )
+    graph = replace(
+        previous,
+        run_id=next_run,
+        raw_records=raw,
+        revisions=tuple(r.revision for r in normalized),
+        issues=tuple(i for r in normalized for i in r.issues),
+        transformations=tuple(t for r in normalized for t in r.transformations),
+        prior_observations=(
+            PriorObservation(
+                UUID("49ef8efe-42ad-44cf-a557-721a929018e7"),
+                UUID("31683cff-e70b-51cc-b6bf-2e36f4b2a627"),
+                RUN_ID,
+                prior,
+            ),
+        ),
+    )
+    return classify_graph(graph, default_registry())
+
+
+def test_prior_run_same_identity_same_values_is_reobservation():
+    outcome = prior_graph(PRODUCT.replace("Widget", " Widget "))
+    assert outcome.results[0].verdict == Verdict.CLEAN
+    assert outcome.results[0].readiness == Readiness.INELIGIBLE
+    (link,) = outcome.graph.reobservations
+    assert str(link.identity_id) == "49ef8efe-42ad-44cf-a557-721a929018e7"
+    assert link.candidate_revision_id == outcome.graph.terminal[0].id
+    assert outcome.graph.duplicates[0].comparison_scope.value == "earlier_run"
+    assert not outcome.reviews
+
+
+def test_prior_run_same_identity_changed_values_is_conflict():
+    outcome = prior_graph(PRODUCT.replace(",19.99,", ",20.00,"))
+    assert outcome.results[0].verdict == Verdict.NEEDS_REVIEW
+    assert not outcome.graph.reobservations
+    assert outcome.reviews[0].reasons[0].conflict_refs == (
+        UUID("49ef8efe-42ad-44cf-a557-721a929018e7"),
+        UUID("31683cff-e70b-51cc-b6bf-2e36f4b2a627"),
+    )
+
+
+def test_duplicate_product_does_not_make_order_reference_ambiguous():
+    outcome = assess(CUSTOMER + PRODUCT + PRODUCT + ORDER)
+    assert outcome.results[-1].readiness == Readiness.ELIGIBLE
+
+
+@pytest.mark.parametrize(
+    "csv",
+    [
+        PRODUCT.replace(",19.99,", ",TBD,").replace(",5,", ",0,"),
+        PRODUCT.replace("SKU-2004", "SKU-00204"),
+        CUSTOMER.replace(",100,", ",$100,"),
+        CUSTOMER.replace(",100,", ",$100,").replace(",active,", ",unknown,"),
+    ],
+)
+def test_classification_issue_identities_include_snapshot(csv):
+    from services.pipeline.classify import classify_graph
+    from services.pipeline.rules.registry import default_registry
+
+    original = graph_for(csv)
+    other = replace(
+        original,
+        fx_snapshot=replace(SNAPSHOT, id=UUID("62056cdb-224e-5c51-98e8-ecc34e563bfc")),
+    )
+    first = classify_graph(original, default_registry())
+    second = classify_graph(other, default_registry())
+    initial_ids = {i.id for i in original.issues}
+    first_ids = {i.id for i in first.graph.issues} - initial_ids
+    second_ids = {i.id for i in second.graph.issues} - initial_ids
+    assert first_ids and second_ids
+    assert not first_ids & second_ids
+
+
+def test_prior_values_comparison_is_type_sensitive():
+    product = PRODUCT.replace(",5,", ",1,")
+    outcome = prior_graph(product, prior_csv=product, prior_stock=True)
+    assert outcome.results[0].verdict == Verdict.NEEDS_REVIEW
+    assert not outcome.graph.reobservations
+
+
+def test_prior_identity_does_not_match_a_different_business_key():
+    outcome = prior_graph(PRODUCT.replace("SKU-2004", "SKU-2005"))
+    assert outcome.results[0].verdict == Verdict.CLEAN
+    assert outcome.results[0].readiness == Readiness.ELIGIBLE
+    assert not outcome.graph.reobservations
+    assert not outcome.graph.duplicates
+
+
+def test_duplicate_ids_repeat_and_change_with_rules_version():
+    from services.pipeline.classify import classify_graph
+    from services.pipeline.rules.registry import RuleRegistry, default_registry
+
+    graph = graph_for(CUSTOMER + CUSTOMER)
+    registry = default_registry()
+    first = classify_graph(graph, registry)
+    assert first == classify_graph(graph, registry)
+    changed = RuleRegistry((replace(registry.rules[0], version=2), *registry.rules[1:]))
+    second = classify_graph(graph, changed)
+    for left, right in (
+        (first.graph.duplicates, second.graph.duplicates),
+        (first.reviews, second.reviews),
+        (first.results, second.results),
+    ):
+        assert all(item.id.version == 5 for item in left)
+        assert {item.id for item in left}.isdisjoint(item.id for item in right)
+
+
+def test_exact_duplicate_product_preserves_line_total_repair():
+    outcome = assess(
+        CUSTOMER + PRODUCT + PRODUCT + ORDER.replace("19.99,1", "$39.98,2")
+    )
+    assert outcome.results[-1].verdict == Verdict.AUTO_REPAIRED
+    assert outcome.results[-1].readiness == Readiness.ELIGIBLE
+    assert outcome.graph.terminal[-1].payload.unit_price.value == Money(
+        Decimal("19.99"), "USD"
+    )
+    assert any(r.origin == "LINE_TOTAL_REPAIRED" for r in outcome.graph.revisions)

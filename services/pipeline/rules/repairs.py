@@ -16,7 +16,6 @@ from services.domain.candidates import (
     candidate_revision_id,
 )
 from services.domain.fields import CandidateField, FieldState
-from services.domain.ids import deterministic_id
 from services.domain.issues import (
     DataQualityIssue,
     IssueCode,
@@ -25,7 +24,11 @@ from services.domain.issues import (
     TransformationEvent,
 )
 from services.pipeline.fx import convert_to_gbp
-from services.pipeline.rules.base import RuleEffect, RunCandidateGraph
+from services.pipeline.rules.base import (
+    RuleEffect,
+    RunCandidateGraph,
+    classification_evidence_id,
+)
 
 SKU_REPAIRS = (("SKU-00204", "SKU-2004"),)
 
@@ -57,8 +60,8 @@ def repair_field[T: (str, Money)](
     revision_id = candidate_revision_id(
         parent.raw_record_id, parent.revision_number + 1
     )
-    event_id = deterministic_id(revision_id, graph.rules_version, operation, path)
-    issue_id = deterministic_id(revision_id, graph.rules_version, code, path, "issue")
+    event_id = classification_evidence_id(graph, revision_id, operation, path)
+    issue_id = classification_evidence_id(graph, revision_id, code, path, "issue")
     after = replace(
         before,
         value=value,
@@ -122,7 +125,7 @@ def repair_line_totals(graph: RunCandidateGraph) -> tuple[RuleEffect, ...]:
             continue
         matches = [
             r.payload
-            for r in graph.terminal
+            for r in graph.distinct_terminal
             if isinstance(r.payload, ProductCandidate)
             and r.payload.sku.value is not None
             and r.payload.sku.value == payload.sku.value
@@ -231,11 +234,18 @@ def bind_fx(graph: RunCandidateGraph) -> tuple[RuleEffect, ...]:
                 sequence=graph.next_sequence(parent),
             )
             issue = conversion.issue_for_revision(revision_id, path, source.source_refs)
+            if issue is not None:
+                issue = replace(
+                    issue,
+                    id=classification_evidence_id(
+                        graph, revision_id, "fx-unavailable", path
+                    ),
+                )
             if event is not None:
                 events = (replace(event, before=source),)
                 issue = DataQualityIssue(
-                    deterministic_id(
-                        revision_id, graph.rules_version, "fx-explanation", path
+                    classification_evidence_id(
+                        graph, revision_id, "fx-explanation", path
                     ),
                     revision_id,
                     IssueCode.FX_CONVERTED_AT_RUN_DATE
@@ -251,9 +261,7 @@ def bind_fx(graph: RunCandidateGraph) -> tuple[RuleEffect, ...]:
             target = replace(conversion.gbp, source_refs=source.source_refs)
         else:
             issue = DataQualityIssue(
-                deterministic_id(
-                    revision_id, graph.rules_version, "fx-unavailable", path
-                ),
+                classification_evidence_id(graph, revision_id, "fx-unavailable", path),
                 revision_id,
                 IssueCode.FX_RATE_UNAVAILABLE,
                 Severity.ERROR,

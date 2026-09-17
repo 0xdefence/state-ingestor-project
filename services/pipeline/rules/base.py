@@ -8,11 +8,18 @@ from uuid import UUID
 
 from services.domain.candidates import CandidateRevision
 from services.domain.fx import FxSnapshot
+from services.domain.ids import deterministic_id
 from services.domain.issues import (
     DataQualityIssue,
     DependencyKind,
     DependencyState,
+    DuplicateRelation,
     TransformationEvent,
+)
+from services.domain.observations import (
+    ComparisonEvidence,
+    PriorObservation,
+    Reobservation,
 )
 from services.domain.raw import RawRecord, RawRecordKind
 
@@ -37,6 +44,10 @@ class RunCandidateGraph:
     transformations: tuple[TransformationEvent, ...] = ()
     dependencies: tuple[CandidateDependency, ...] = ()
     rules_version: str = ""
+    prior_observations: tuple[PriorObservation, ...] = ()
+    duplicates: tuple[DuplicateRelation, ...] = ()
+    reobservations: tuple[Reobservation, ...] = ()
+    comparisons: tuple[ComparisonEvidence, ...] = ()
 
     @property
     def terminal(self) -> tuple[CandidateRevision, ...]:
@@ -52,6 +63,19 @@ class RunCandidateGraph:
             )
             if raw.kind is RawRecordKind.DATA and raw.id in latest
         )
+
+    @property
+    def distinct_terminal(self) -> tuple[CandidateRevision, ...]:
+        """First exact parsed occurrence for rules that resolve record targets."""
+        raw_fields = {raw.id: raw.fields for raw in self.raw_records}
+        seen: set[tuple[str, ...]] = set()
+        result: list[CandidateRevision] = []
+        for revision in self.terminal:
+            values = raw_fields[revision.raw_record_id]
+            if values not in seen:
+                seen.add(values)
+                result.append(revision)
+        return tuple(result)
 
     def check_barrier(self) -> None:
         data_ids = {r.id for r in self.raw_records if r.kind is RawRecordKind.DATA}
@@ -87,6 +111,9 @@ class RuleEffect:
     issues: tuple[DataQualityIssue, ...] = ()
     transformations: tuple[TransformationEvent, ...] = ()
     dependencies: tuple[CandidateDependency, ...] = ()
+    duplicates: tuple[DuplicateRelation, ...] = ()
+    reobservations: tuple[Reobservation, ...] = ()
+    comparisons: tuple[ComparisonEvidence, ...] = ()
 
 
 class Rule(Protocol):
@@ -141,6 +168,12 @@ def apply_effects(graph: RunCandidateGraph, rule: RuleDefinition) -> RunCandidat
     return replace(
         graph,
         revisions=(*graph.revisions, *revisions),
+        duplicates=(*graph.duplicates, *(d for e in effects for d in e.duplicates)),
+        reobservations=(
+            *graph.reobservations,
+            *(r for e in effects for r in e.reobservations),
+        ),
+        comparisons=(*graph.comparisons, *(c for e in effects for c in e.comparisons)),
         issues=(*graph.issues, *(i for e in effects for i in e.issues)),
         transformations=(
             *graph.transformations,
@@ -150,4 +183,15 @@ def apply_effects(graph: RunCandidateGraph, rule: RuleDefinition) -> RunCandidat
             *graph.dependencies,
             *(d for e in effects for d in e.dependencies),
         ),
+    )
+
+
+def classification_evidence_id(
+    graph: RunCandidateGraph, revision_id: UUID, *coordinates: object
+) -> UUID:
+    return deterministic_id(
+        revision_id,
+        graph.rules_version,
+        graph.fx_snapshot.id if graph.fx_snapshot else None,
+        *coordinates,
     )
