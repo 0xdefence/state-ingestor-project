@@ -270,3 +270,89 @@ def test_reobservation_persistence_rolls_back_with_classification(
     summary = classify_run(current, default_registry(), uow_for(engine), FixedClock())
     assert len(summary.graph.reobservations) == 1
     assert canonical_counts(engine) == (1, 1, 1)
+
+
+def test_invalid_classified_evidence_records_load_failure_without_canonical_writes(
+    engine, tmp_path
+):
+    from services.application.load import stage_run
+
+    run_id = prepared(engine, tmp_path, PRODUCT)
+    summary = classify_run(run_id, default_registry(), uow_for(engine), FixedClock())
+    with engine.begin() as conn:
+        conn.execute(
+            text("DELETE FROM classification_result WHERE id=:id"),
+            {"id": summary.results[0].id},
+        )
+    before = evidence(engine)
+    with pytest.raises(ValueError, match="terminal"):
+        stage_run(run_id, lambda: uow_for(engine), FixedClock())
+    assert canonical_counts(engine) == (0, 0, 0)
+    assert evidence(engine) == before
+    with uow_for(engine) as uow:
+        run = uow.runs.get(run_id)
+        assert (run.state, run.stage_failure) == (RunState.CLASSIFIED, "load_failed")
+    with engine.connect() as conn:
+        events = dict(
+            conn.execute(
+                text(
+                    "SELECT event_type,facts FROM pipeline_event "
+                    "WHERE run_id=:id AND stage='load'"
+                ),
+                {"id": run_id},
+            ).all()
+        )
+    assert set(events) == {"stage_started", "stage_failed"}
+    assert all(facts["attempt_number"] == 1 for facts in events.values())
+    assert events["stage_failed"]["error_type"] == "ValueError"
+
+
+@pytest.mark.parametrize("reobserved_target", [False, True])
+@pytest.mark.parametrize("corruption", ["null", "wrong_identity"])
+def test_staged_replay_rejects_corrupt_dependency_linkage_without_repair(
+    engine, tmp_path, reobserved_target, corruption
+):
+    from services.application.load import stage_run
+
+    if reobserved_target:
+        prior = prepared(engine, tmp_path / "prior", CUSTOMER + PRODUCT)
+        classify_run(prior, default_registry(), uow_for(engine), FixedClock())
+        stage_run(prior, lambda: uow_for(engine), FixedClock())
+    run_id = prepared(engine, tmp_path / "current", CUSTOMER + PRODUCT + ORDER)
+    summary = classify_run(run_id, default_registry(), uow_for(engine), FixedClock())
+    assert len(summary.graph.reobservations) == (2 if reobserved_target else 0)
+    stage_run(run_id, lambda: uow_for(engine), FixedClock())
+    dependency = next(d for d in summary.dependencies if d.kind == "product")
+    with engine.begin() as conn:
+        wrong_identity = conn.scalar(
+            text("SELECT id FROM canonical_identity WHERE entity_type='order'")
+        )
+        corrupted = None if corruption == "null" else wrong_identity
+        conn.execute(
+            text(
+                "UPDATE dependency_record SET resolved_entity_id=:identity WHERE id=:id"
+            ),
+            {"identity": corrupted, "id": dependency.id},
+        )
+    before = evidence(engine)
+    with uow_for(engine) as uow:
+        before_run = uow.runs.get(run_id)
+        before_links = uow.canonicals.reobservations(run_id)
+    with engine.connect() as conn:
+        before_events = conn.scalar(text("SELECT count(*) FROM pipeline_event"))
+    with pytest.raises(ValueError, match="linkage mismatch"):
+        stage_run(run_id, lambda: uow_for(engine), FixedClock())
+    assert canonical_counts(engine) == (3, 3, 3)
+    assert evidence(engine) == before
+    with uow_for(engine) as uow:
+        assert uow.runs.get(run_id) == before_run
+        assert uow.canonicals.reobservations(run_id) == before_links
+    with engine.connect() as conn:
+        assert conn.scalar(text("SELECT count(*) FROM pipeline_event")) == before_events
+        assert (
+            conn.scalar(
+                text("SELECT resolved_entity_id FROM dependency_record WHERE id=:id"),
+                {"id": dependency.id},
+            )
+            == corrupted
+        )

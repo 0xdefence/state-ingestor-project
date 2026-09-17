@@ -41,6 +41,7 @@ class MemoryLoad:
             "revisions": {},
             "keys": {},
             "events": [],
+            "dependencies": {d.id: d for d in self.summary.dependencies},
         }
         self.opened = 0
 
@@ -51,9 +52,7 @@ class MemoryLoad:
             def __enter__(self):
                 owner.opened += 1
                 self.local = deepcopy(owner.data)
-                self.runs = SimpleNamespace(
-                    get=lambda _: self.local["run"], set_state=self.set_state
-                )
+                self.runs = SimpleNamespace(get=self.get_run, set_state=self.set_state)
                 # These ports deliberately have no stage writers: load must read
                 # existing evidence, never invoke normalization/classification.
                 self.candidates = SimpleNamespace(
@@ -67,7 +66,7 @@ class MemoryLoad:
                     ),
                     dependencies=lambda classification: tuple(
                         d
-                        for d in owner.summary.dependencies
+                        for d in self.local["dependencies"].values()
                         if d.classification_id == classification
                     ),
                 )
@@ -101,9 +100,20 @@ class MemoryLoad:
                         ),
                         None,
                     ),
-                    link_dependency=lambda *_: None,
+                    link_dependency=self.link_dependency,
                 )
                 return self
+
+            def get_run(self, run_id):
+                if run_id != self.local["run"].id:
+                    raise LookupError("Unknown run")
+                return self.local["run"]
+
+            def link_dependency(self, dependency_id, identity_id):
+                self.local["dependencies"][dependency_id] = replace(
+                    self.local["dependencies"][dependency_id],
+                    resolved_entity_id=identity_id,
+                )
 
             def set_state(self, _, state, *, stage_failure=None):
                 self.local["run"] = replace(
@@ -159,8 +169,17 @@ def test_entire_eligible_set_is_validated_before_write_unit_of_work():
     store.summary = replace(store.summary, results=store.summary.results[:-1])
     with pytest.raises(ValueError, match="terminal"):
         stage_run(store.run_id, store.uow, FixedClock())
-    assert store.opened == 1
-    assert not store.data["events"]
+    # The second UoW records failure; no canonical write UoW is reached.
+    assert store.opened == 2
+    assert not store.data["identities"]
+    assert not store.data["revisions"]
+    assert not store.data["keys"]
+    assert store.data["run"].state is RunState.CLASSIFIED
+    assert store.data["run"].stage_failure == "load_failed"
+    assert [
+        (e.event_type, e.facts["attempt_number"]) for e in store.data["events"]
+    ] == [("stage_started", 1), ("stage_failed", 1)]
+    assert store.data["events"][-1].facts["error_type"] == "ValueError"
 
 
 def test_classification_retry_does_not_duplicate_results():
@@ -171,3 +190,18 @@ def test_classification_retry_does_not_duplicate_results():
     assert len({i.id for i in first.graph.issues + retried.graph.issues}) == len(
         first.graph.issues
     )
+
+
+@pytest.mark.parametrize("unknown", [False, True])
+def test_unknown_run_and_illegal_load_entry_have_no_side_effects(unknown):
+    from services.application.load import stage_run
+
+    store = MemoryLoad()
+    run_id = uuid4() if unknown else store.run_id
+    if not unknown:
+        store.data["run"] = replace(store.data["run"], state=RunState.NORMALISED)
+    before = deepcopy(store.data)
+    with pytest.raises(LookupError if unknown else ValueError):
+        stage_run(run_id, store.uow, FixedClock())
+    assert store.data == before
+    assert store.opened == 1

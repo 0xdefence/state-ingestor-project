@@ -105,23 +105,25 @@ def stage_run(
     clock: Clock,
     failure_injector: FailureInjector | None = None,
 ) -> LoadResult:
-    # Finish selection and key validation before opening the write UoW.
-    with uow_factory() as read:
-        run = read.runs.get(run_id)
-        if run.state not in (
-            RunState.CLASSIFIED,
-            RunState.STAGED,
-        ) or run.stage_failure not in (None, "load_failed"):
-            raise ValueError(f"Run cannot enter load from {run.state}")
-        frozen = _facts(read, run_id)
-        eligible = eligible_candidates(frozen[0], frozen[1])
-        links = read.canonicals.reobservations(run_id)
-        keys = {c.id: business_key(c.payload) for c in eligible}
-        if any(key is None for key in keys.values()):
-            raise ValueError("Eligible canonical candidate requires a governed key")
-        if len(set(keys.values())) != len(keys):
-            raise ValueError("Eligible set has conflicting governed business keys")
+    accepted = False
     try:
+        # Finish selection and key validation before opening the write UoW.
+        with uow_factory() as read:
+            run = read.runs.get(run_id)
+            if run.state not in (
+                RunState.CLASSIFIED,
+                RunState.STAGED,
+            ) or run.stage_failure not in (None, "load_failed"):
+                raise ValueError(f"Run cannot enter load from {run.state}")
+            accepted = True
+            frozen = _facts(read, run_id)
+            eligible = eligible_candidates(frozen[0], frozen[1])
+            links = read.canonicals.reobservations(run_id)
+            keys = {c.id: business_key(c.payload) for c in eligible}
+            if any(key is None for key in keys.values()):
+                raise ValueError("Eligible canonical candidate requires a governed key")
+            if len(set(keys.values())) != len(keys):
+                raise ValueError("Eligible set has conflicting governed business keys")
         with uow_factory() as write:
             # Run lock serializes identical staging attempts. Cross-run governed
             # key races are rejected by the database's unique key constraint.
@@ -152,6 +154,22 @@ def stage_run(
                         existing.identity_id, key[0], key[1], existing.id
                     ):
                         raise ValueError("Canonical business key identity mismatch")
+                observed = {
+                    link.candidate_revision_id: link.identity_id
+                    for link in write.canonicals.reobservations(run_id)
+                }
+                # Read the committed linkage after acquiring the run lock: another
+                # loader may have staged it since our initial classified snapshot.
+                for dependency in _facts(write, run_id)[2]:
+                    if dependency.state is not DependencyState.RESOLVED:
+                        continue
+                    target_id = dependency.target_candidate_revision_id
+                    if target_id is None:
+                        raise ValueError("Dependency canonical linkage mismatch")
+                    target = write.canonicals.for_candidate(target_id)
+                    expected = target.identity_id if target else observed.get(target_id)
+                    if expected is None or dependency.resolved_entity_id != expected:
+                        raise ValueError("Dependency canonical linkage mismatch")
                 return LoadResult(run_id, len(eligible))
             if (
                 current.state is not RunState.CLASSIFIED
@@ -219,7 +237,11 @@ def stage_run(
             )
             write.commit()
     except Exception as error:
-        # The failed canonical transaction has exited and rolled back completely.
+        if not accepted:
+            # Unknown runs and illegal entry states never record load attempts.
+            raise
+        # Preparation/read failures and failed canonical writes have both exited
+        # their UoW before recording failure in an independent transaction.
         with uow_factory() as failure:
             attempt = failure.events.next_attempt_number(run_id, "load")
             current = failure.runs.get(run_id)
