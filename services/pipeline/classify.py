@@ -157,6 +157,7 @@ def classify_graph(
                 target.referenced_business_value,
                 None,
                 state,
+                target.target_revision_id,
             )
             dependencies.append(dependency)
             if state != DependencyState.RESOLVED:
@@ -215,7 +216,7 @@ def classify_run(
     uow: UnitOfWork,
     clock: Clock,
     *,
-    prior_observations: tuple[PriorObservation, ...] = (),
+    prior_observations: tuple[PriorObservation, ...] | None = None,
 ) -> ClassificationSummary:
     with uow:
         run = uow.runs.get(run_id)
@@ -230,10 +231,14 @@ def classify_run(
             initial,
             None,
             clock.now(),
-            prior_observations=prior_observations,
+            prior_observations=prior_observations or (),
         )
         # No writer, including state/event writers, is reached before this check.
         graph.check_barrier()
+        if prior_observations is None:
+            graph = replace(
+                graph, prior_observations=uow.canonicals.prior_observations()
+            )
         # Frozen initial payload refs identify normalization evidence. Validation
         # may also attach issues to revision 1; those are recomputed and verified.
         normalization_issues: set[UUID] = set()
@@ -276,6 +281,8 @@ def classify_run(
             uow.classifications.add_dependency(dependency)
         for duplicate in summary.graph.duplicates:
             uow.classifications.add_duplicate(duplicate)
+        for link in summary.graph.reobservations:
+            uow.canonicals.add_reobservation(link)
         for review in summary.reviews:
             uow.reviews.add(review)
         uow.runs.complete_classification(run_id, registry.rules_version, summary.counts)

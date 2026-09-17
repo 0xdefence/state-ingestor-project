@@ -163,6 +163,7 @@ class DependencyRecord:
     referenced_business_value: str
     resolved_entity_id: UUID | None
     state: DependencyState
+    target_candidate_revision_id: UUID | None = None
 
     def __post_init__(self) -> None:
         require_derived_id(self.id)

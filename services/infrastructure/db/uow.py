@@ -6,6 +6,7 @@ from typing import Self
 
 from sqlalchemy.orm import Session
 
+from services.application.canonical_ports import CanonicalRepository
 from services.application.derived_ports import (
     CandidateRepository,
     ClassificationRepository,
@@ -79,6 +80,10 @@ class SqlAlchemyUnitOfWork:
     @property
     def reviews(self) -> ReviewRepository:
         return self.repositories.reviews
+
+    @property
+    def canonicals(self) -> CanonicalRepository:
+        return self.repositories.canonicals
 
     @property
     def fx(self) -> FxRepository:

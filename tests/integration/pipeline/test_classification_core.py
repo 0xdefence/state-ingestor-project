@@ -45,7 +45,7 @@ from tests.unit.classify.test_rules import (
 def prepared(engine, tmp_path, csv=CUSTOMER + PRODUCT.replace(",5,", ",0,") + ORDER):
     store = FilesystemSourceStore(tmp_path)
     run = ingest_file(
-        IngestFile(BytesIO(csv.encode()), "rules.csv", "fixture", "test"),
+        IngestFile(BytesIO(csv.encode()), "rules.csv", "fixture", str(tmp_path)),
         uow_for(engine),
         store,
         FixedClock(),

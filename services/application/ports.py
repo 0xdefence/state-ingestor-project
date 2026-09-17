@@ -7,6 +7,7 @@ from types import TracebackType
 from typing import BinaryIO, Literal, Protocol, Self
 from uuid import UUID
 
+from services.application.canonical_ports import CanonicalRepository
 from services.application.derived_ports import (
     CandidateRepository,
     ClassificationRepository,
@@ -157,9 +158,12 @@ class Repositories:
     classifications: ClassificationRepository
     reviews: ReviewRepository
     fx: FxRepository
+    canonicals: CanonicalRepository
 
 
 class UnitOfWork(Protocol):
+    @property
+    def canonicals(self) -> CanonicalRepository: ...
     @property
     def fx(self) -> FxRepository: ...
     @property

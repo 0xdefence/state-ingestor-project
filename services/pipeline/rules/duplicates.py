@@ -52,6 +52,10 @@ def _typed_values(value: object) -> object:
     return (type(value), value)
 
 
+def same_typed_values(left: object, right: object) -> bool:
+    return _typed_values(left) == _typed_values(right)
+
+
 def comparisons(graph: RunCandidateGraph) -> tuple[RuleEffect, ...]:
     raw_by_id = {r.id: r for r in graph.raw_records}
     exact: dict[tuple[str, ...], UUID] = {}

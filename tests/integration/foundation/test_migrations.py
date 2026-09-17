@@ -26,6 +26,9 @@ from services.application.ports import (
     SourceRepository,
 )
 from services.domain.runs import RunState
+from services.infrastructure.db.canonical_repository import (
+    SqlAlchemyCanonicalRepository,
+)
 from services.infrastructure.db.derived_repositories import (
     SqlAlchemyCandidateRepository,
     SqlAlchemyClassificationRepository,
@@ -242,6 +245,7 @@ def unused_repositories(session: Session) -> Repositories:
         classifications=SqlAlchemyClassificationRepository(session),
         reviews=SqlAlchemyReviewRepository(session),
         fx=SqlAlchemyFxRepository(session),
+        canonicals=SqlAlchemyCanonicalRepository(session),
     )
 
 

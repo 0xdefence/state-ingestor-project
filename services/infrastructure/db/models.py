@@ -11,6 +11,7 @@ from sqlalchemy import (
     DateTime,
     Enum,
     ForeignKey,
+    ForeignKeyConstraint,
     Index,
     Numeric,
     String,
@@ -351,7 +352,12 @@ class DependencyRecordModel(Base):
     )
     kind: Mapped[str]
     referenced_business_value: Mapped[str]
-    resolved_entity_id: Mapped[UUID | None]
+    resolved_entity_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("canonical_identity.id", name="fk_dependency_resolved_entity")
+    )
+    target_candidate_revision_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("candidate_revision.id", name="fk_dependency_target_candidate")
+    )
     state: Mapped[str]
 
 
@@ -435,3 +441,82 @@ class FxRateModel(Base):
     publication_date: Mapped[date] = mapped_column(primary_key=True)
     eur_reference_rate: Mapped[Decimal] = mapped_column(Numeric())
     source_url: Mapped[str]
+
+
+class CanonicalIdentityModel(Base):
+    __tablename__ = "canonical_identity"
+    __table_args__ = (
+        CheckConstraint(
+            "entity_type IN ('customer','product','order')",
+            name="ck_canonical_entity_type",
+        ),
+        CheckConstraint(
+            "substring(id::text, 15, 1) = '4' "
+            "AND substring(id::text, 20, 1) IN ('8','9','a','b')",
+            name="ck_canonical_identity_uuid4",
+        ),
+    )
+    id: Mapped[UUID] = mapped_column(primary_key=True)
+    entity_type: Mapped[str]
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class CanonicalRevisionModel(Base):
+    __tablename__ = "canonical_revision"
+    __table_args__ = (
+        UniqueConstraint(
+            "identity_id", "revision_number", name="uq_canonical_identity_revision"
+        ),
+        UniqueConstraint("candidate_revision_id", name="uq_canonical_candidate"),
+        UniqueConstraint("identity_id", "id", name="uq_canonical_revision_identity_id"),
+        CheckConstraint("revision_number > 0", name="ck_canonical_revision_number"),
+        CheckConstraint(
+            "substring(id::text, 15, 1) = '4' "
+            "AND substring(id::text, 20, 1) IN ('8','9','a','b')",
+            name="ck_canonical_revision_uuid4",
+        ),
+    )
+    id: Mapped[UUID] = mapped_column(primary_key=True)
+    identity_id: Mapped[UUID] = mapped_column(ForeignKey("canonical_identity.id"))
+    candidate_revision_id: Mapped[UUID] = mapped_column(
+        ForeignKey("candidate_revision.id")
+    )
+    revision_number: Mapped[int]
+    staged_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class CanonicalBusinessKeyModel(Base):
+    __tablename__ = "canonical_business_key"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["identity_id", "effective_revision"],
+            ["canonical_revision.identity_id", "canonical_revision.id"],
+            name="fk_canonical_key_revision",
+        ),
+        CheckConstraint(
+            "key_type IN ('customer','product','order')", name="ck_canonical_key_type"
+        ),
+        CheckConstraint("length(value) > 0", name="ck_canonical_key_value"),
+    )
+    identity_id: Mapped[UUID] = mapped_column(ForeignKey("canonical_identity.id"))
+    key_type: Mapped[str] = mapped_column(primary_key=True)
+    value: Mapped[str] = mapped_column(primary_key=True)
+    effective_revision: Mapped[UUID]
+
+
+class ReobservationLinkModel(Base):
+    __tablename__ = "reobservation_link"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["identity_id", "canonical_revision_id"],
+            ["canonical_revision.identity_id", "canonical_revision.id"],
+            name="fk_reobservation_canonical",
+        ),
+        UniqueConstraint("candidate_revision_id", name="uq_reobservation_candidate"),
+    )
+    id: Mapped[UUID] = mapped_column(primary_key=True)
+    candidate_revision_id: Mapped[UUID] = mapped_column(
+        ForeignKey("candidate_revision.id")
+    )
+    identity_id: Mapped[UUID]
+    canonical_revision_id: Mapped[UUID]

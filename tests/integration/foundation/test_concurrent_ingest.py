@@ -34,6 +34,9 @@ from services.application.ports import (
     SourceFile,
 )
 from services.domain.runs import RunChainInvariantError, RunState
+from services.infrastructure.db.canonical_repository import (
+    SqlAlchemyCanonicalRepository,
+)
 from services.infrastructure.db.derived_repositories import (
     SqlAlchemyCandidateRepository,
     SqlAlchemyClassificationRepository,
@@ -102,6 +105,7 @@ def repositories(session: Session) -> Repositories:
         SqlAlchemyClassificationRepository(session),
         SqlAlchemyReviewRepository(session),
         SqlAlchemyFxRepository(session),
+        SqlAlchemyCanonicalRepository(session),
     )
 
 
@@ -157,6 +161,7 @@ def test_concurrent_identical_ingests_create_one_run(
             bundle.classifications,
             bundle.reviews,
             bundle.fx,
+            bundle.canonicals,
         )
 
     def submit(name: str) -> IngestResult:

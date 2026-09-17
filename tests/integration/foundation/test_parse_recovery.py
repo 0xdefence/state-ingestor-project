@@ -14,6 +14,9 @@ from services.application.ingest import IngestFile, ingest_file
 from services.application.ports import Repositories
 from services.domain.raw import RawRecord
 from services.domain.runs import RunState
+from services.infrastructure.db.canonical_repository import (
+    SqlAlchemyCanonicalRepository,
+)
 from services.infrastructure.db.derived_repositories import (
     SqlAlchemyCandidateRepository,
     SqlAlchemyClassificationRepository,
@@ -53,6 +56,7 @@ def repositories(session: Session) -> Repositories:
         SqlAlchemyClassificationRepository(session),
         SqlAlchemyReviewRepository(session),
         SqlAlchemyFxRepository(session),
+        SqlAlchemyCanonicalRepository(session),
     )
 
 

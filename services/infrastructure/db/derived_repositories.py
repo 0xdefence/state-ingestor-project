@@ -121,6 +121,7 @@ def _dependency(row: DependencyRecordModel) -> DependencyRecord:
         row.referenced_business_value,
         row.resolved_entity_id,
         DependencyState(row.state),
+        row.target_candidate_revision_id,
     )
 
 
@@ -309,7 +310,21 @@ class SqlAlchemyClassificationRepository:
     def add_dependency(self, dependency: DependencyRecord) -> None:
         existing = self._session.get(DependencyRecordModel, dependency.id)
         if existing is not None:
-            if not evidence_equal(_dependency(existing), dependency):
+            # Canonical linkage is a separate, one-time load enrichment.
+            stored = _dependency(existing)
+            if (
+                dependency.resolved_entity_id is None
+                and stored.resolved_entity_id is not None
+            ):
+                from services.infrastructure.db.canonical_repository import (
+                    SqlAlchemyCanonicalRepository,
+                )
+
+                SqlAlchemyCanonicalRepository(self._session).link_dependency(
+                    stored.id, stored.resolved_entity_id
+                )
+                stored = replace(stored, resolved_entity_id=None)
+            if not evidence_equal(stored, dependency):
                 raise ValueError("Dependency identity mismatch")
             return
         self._session.add(
@@ -320,6 +335,7 @@ class SqlAlchemyClassificationRepository:
                 referenced_business_value=dependency.referenced_business_value,
                 resolved_entity_id=dependency.resolved_entity_id,
                 state=dependency.state,
+                target_candidate_revision_id=dependency.target_candidate_revision_id,
             )
         )
         self._session.flush()
