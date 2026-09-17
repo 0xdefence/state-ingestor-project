@@ -272,6 +272,8 @@ class MemoryLoad:
             "identities": {},
             "revisions": {},
             "keys": {},
+            "promotions": [],
+            "current": {},
             "events": [],
             "dependencies": {d.id: d for d in self.summary.dependencies},
         }
@@ -313,6 +315,7 @@ class MemoryLoad:
                     append=self.local["events"].append,
                 )
                 self.canonicals = SimpleNamespace(
+                    activate=self.activate,
                     reobservations=lambda _: (),
                     get_key=lambda kind, value: self.local["keys"].get((kind, value)),
                     add_identity=lambda value: self.local["identities"].setdefault(
@@ -340,6 +343,10 @@ class MemoryLoad:
                 if run_id != self.local["run"].id:
                     raise LookupError("Unknown run")
                 return self.local["run"]
+
+            def activate(self, event):
+                self.local["promotions"].append(event)
+                self.local["current"][event.identity_id] = event.canonical_revision_id
 
             def link_dependency(self, dependency_id, identity_id):
                 self.local["dependencies"][dependency_id] = replace(
@@ -377,6 +384,8 @@ def test_load_retry_reads_classifications_and_stages_exactly_once(boundary):
     assert not store.data["identities"]
     assert not store.data["revisions"]
     assert not store.data["keys"]
+    assert not store.data["promotions"]
+    assert not store.data["current"]
     assert store.data["run"].stage_failure == "load_failed"
     assert store.data["run"].state is RunState.CLASSIFIED
     assert stage_run(store.run_id, store.uow, FixedClock()).staged_count == 3
@@ -406,6 +415,8 @@ def test_entire_eligible_set_is_validated_before_write_unit_of_work():
     assert not store.data["identities"]
     assert not store.data["revisions"]
     assert not store.data["keys"]
+    assert not store.data["promotions"]
+    assert not store.data["current"]
     assert store.data["run"].state is RunState.CLASSIFIED
     assert store.data["run"].stage_failure == "load_failed"
     assert [

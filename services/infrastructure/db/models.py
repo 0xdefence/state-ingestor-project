@@ -520,3 +520,88 @@ class ReobservationLinkModel(Base):
     )
     identity_id: Mapped[UUID]
     canonical_revision_id: Mapped[UUID]
+
+
+class ReviewDecisionModel(Base):
+    __tablename__ = "review_decision"
+    __table_args__ = (
+        UniqueConstraint("review_item_id", "sequence", name="uq_decision_sequence"),
+        UniqueConstraint("idempotency_key", name="uq_decision_idempotency"),
+        UniqueConstraint("review_item_id", "id", name="uq_decision_review_id"),
+        ForeignKeyConstraint(
+            ["review_item_id", "supersedes_decision_id"],
+            ["review_decision.review_item_id", "review_decision.id"],
+            name="fk_decision_supersedes_same_review",
+        ),
+        CheckConstraint("sequence > 0", name="ck_decision_sequence"),
+        CheckConstraint(
+            "outcome IN ('approve','reject','acknowledge')", name="ck_decision_outcome"
+        ),
+        CheckConstraint("length(trim(operator_name)) > 0", name="ck_decision_operator"),
+        CheckConstraint("length(trim(idempotency_key)) > 0", name="ck_decision_key"),
+        CheckConstraint(
+            "outcome <> 'reject' OR (reason IS NOT NULL AND length(trim(reason)) > 0)",
+            name="ck_decision_reason",
+        ),
+        CheckConstraint(
+            "substring(id::text, 15, 1) = '4' "
+            "AND substring(id::text, 20, 1) IN ('8','9','a','b')",
+            name="ck_decision_uuid4",
+        ),
+    )
+    id: Mapped[UUID] = mapped_column(primary_key=True)
+    review_item_id: Mapped[UUID] = mapped_column(ForeignKey("review_item.id"))
+    candidate_revision_id: Mapped[UUID] = mapped_column(
+        ForeignKey("candidate_revision.id")
+    )
+    sequence: Mapped[int]
+    outcome: Mapped[str]
+    operator_name: Mapped[str]
+    reason: Mapped[str | None]
+    idempotency_key: Mapped[str]
+    supersedes_decision_id: Mapped[UUID | None]
+    decided_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class CanonicalPromotionEventModel(Base):
+    __tablename__ = "canonical_promotion_event"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["identity_id", "canonical_revision_id"],
+            ["canonical_revision.identity_id", "canonical_revision.id"],
+            name="fk_promotion_revision",
+        ),
+        ForeignKeyConstraint(
+            ["identity_id", "prior_current_revision_id"],
+            ["canonical_revision.identity_id", "canonical_revision.id"],
+            name="fk_promotion_prior",
+        ),
+        CheckConstraint(
+            "action IN ('activate','withdraw')", name="ck_promotion_action"
+        ),
+        CheckConstraint(
+            "substring(id::text, 15, 1) = '4' "
+            "AND substring(id::text, 20, 1) IN ('8','9','a','b')",
+            name="ck_promotion_uuid4",
+        ),
+    )
+    id: Mapped[UUID] = mapped_column(primary_key=True)
+    identity_id: Mapped[UUID]
+    canonical_revision_id: Mapped[UUID]
+    action: Mapped[str]
+    decision_id: Mapped[UUID | None] = mapped_column(ForeignKey("review_decision.id"))
+    prior_current_revision_id: Mapped[UUID | None]
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class CanonicalCurrentModel(Base):
+    __tablename__ = "canonical_current"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["identity_id", "canonical_revision_id"],
+            ["canonical_revision.identity_id", "canonical_revision.id"],
+            name="fk_current_revision",
+        ),
+    )
+    identity_id: Mapped[UUID] = mapped_column(primary_key=True)
+    canonical_revision_id: Mapped[UUID]

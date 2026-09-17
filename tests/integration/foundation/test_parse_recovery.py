@@ -17,6 +17,7 @@ from services.domain.runs import RunState
 from services.infrastructure.db.canonical_repository import (
     SqlAlchemyCanonicalRepository,
 )
+from services.infrastructure.db.decision_repository import SqlAlchemyDecisionRepository
 from services.infrastructure.db.derived_repositories import (
     SqlAlchemyCandidateRepository,
     SqlAlchemyClassificationRepository,
@@ -57,6 +58,7 @@ def repositories(session: Session) -> Repositories:
         SqlAlchemyReviewRepository(session),
         SqlAlchemyFxRepository(session),
         SqlAlchemyCanonicalRepository(session),
+        SqlAlchemyDecisionRepository(session),
     )
 
 
@@ -89,7 +91,7 @@ def records_for(engine: Engine, run_id: UUID) -> list[RawRecord]:
 def test_failed_batch_and_retry_match_uninterrupted_parse(
     engine: Engine, tmp_path: Path
 ) -> None:
-    from services.application.process import RetryRun, parse_run, retry_run
+    from services.application.process import parse_run
 
     store = FilesystemSourceStore(tmp_path)
     result = ingest_file(
@@ -131,11 +133,9 @@ def test_failed_batch_and_retry_match_uninterrupted_parse(
         ]
         old_events = {e.id: (e.event_type, e.facts) for e in events}
 
-    outcome = retry_run(
-        RetryRun(result.run_id, batch_size=2), factory, store, FixedClock()
-    )
-    assert outcome.state == RunState.PARSED
-    assert outcome.parse.record_count == 5
+    # Retry this isolated stage; retry_run now executes the entire pipeline.
+    outcome = parse_run(result.run_id, 2, factory, store, clock=FixedClock())
+    assert outcome.record_count == 5
     assert records_for(engine, result.run_id) == expected
     assert len({id(session) for session in sessions}) == len(sessions)
     with Session(engine) as session:
@@ -154,7 +154,7 @@ def test_failed_batch_and_retry_match_uninterrupted_parse(
             if e.event_type == "batch_committed"
         ) == [2, 4, 5]
     before = len(events)
-    assert retry_run(RetryRun(result.run_id), factory, store, FixedClock()) == outcome
+    assert parse_run(result.run_id, 2, factory, store, clock=FixedClock()) == outcome
     with Session(engine) as session:
         assert len(session.scalars(select(PipelineEventModel)).all()) == before
 
@@ -188,7 +188,7 @@ def test_raw_replay_requires_identical_evidence(engine: Engine, tmp_path: Path) 
 def test_event_attempt_numbers_survive_independent_transactions(
     engine: Engine, tmp_path: Path
 ) -> None:
-    from services.application.process import RetryRun, parse_run, retry_run
+    from services.application.process import parse_run
 
     store = FilesystemSourceStore(tmp_path)
     result = ingest_file(
@@ -213,7 +213,7 @@ def test_event_attempt_numbers_survive_independent_transactions(
         assert sorted(event.facts["attempt_number"] for event in failures) == [1, 2, 3]
         assert [event.facts["record_ordinal"] for event in failures] == [2, 2, 2]
         old_ids = {event.id for event in events}
-    retry_run(RetryRun(result.run_id, 2), factory, store, FixedClock())
+    parse_run(result.run_id, 2, factory, store, clock=FixedClock())
     with Session(engine) as session:
         events = session.scalars(select(PipelineEventModel)).all()
         assert old_ids <= {event.id for event in events}

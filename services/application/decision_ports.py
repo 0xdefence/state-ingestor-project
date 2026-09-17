@@ -1,0 +1,13 @@
+"""Decision history belongs to the caller's single transaction."""
+
+from typing import Protocol
+from uuid import UUID
+
+from services.domain.decisions import ReviewDecision
+
+
+class DecisionRepository(Protocol):
+    def lock_idempotency(self, key: str) -> None: ...
+    def by_idempotency_key(self, key: str) -> ReviewDecision | None: ...
+    def for_review(self, review_item_id: UUID) -> tuple[ReviewDecision, ...]: ...
+    def append(self, decision: ReviewDecision) -> None: ...

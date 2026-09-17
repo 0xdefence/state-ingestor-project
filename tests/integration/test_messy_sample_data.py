@@ -24,7 +24,9 @@ from services.domain.runs import RunState
 from services.infrastructure.db.models import (
     CandidateRevisionModel,
     CanonicalBusinessKeyModel,
+    CanonicalCurrentModel,
     CanonicalIdentityModel,
+    CanonicalPromotionEventModel,
     CanonicalRevisionModel,
     ClassificationResultModel,
     DataQualityIssueModel,
@@ -34,6 +36,7 @@ from services.infrastructure.db.models import (
     PipelineEventModel,
     RawRecordModel,
     ReobservationLinkModel,
+    ReviewDecisionModel,
     ReviewItemModel,
     RunModel,
     TransformationEventModel,
@@ -68,8 +71,14 @@ def _ingest(engine: Engine, store: FilesystemSourceStore, source_bytes: bytes):
 def _reset_pipeline(engine: Engine, run_id) -> None:
     with Session(engine) as session:
         for model in (
+            CanonicalCurrentModel,
+            CanonicalPromotionEventModel,
+            ReviewDecisionModel,
             ReobservationLinkModel,
             CanonicalBusinessKeyModel,
+    CanonicalCurrentModel,
+    CanonicalPromotionEventModel,
+    ReviewDecisionModel,
             DependencyRecordModel,
             CanonicalRevisionModel,
             CanonicalIdentityModel,

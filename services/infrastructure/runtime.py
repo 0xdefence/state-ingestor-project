@@ -18,6 +18,7 @@ from services.application.process import UnitOfWorkFactory
 from services.infrastructure.db.canonical_repository import (
     SqlAlchemyCanonicalRepository,
 )
+from services.infrastructure.db.decision_repository import SqlAlchemyDecisionRepository
 from services.infrastructure.db.derived_repositories import (
     SqlAlchemyCandidateRepository,
     SqlAlchemyClassificationRepository,
@@ -104,6 +105,7 @@ def _repositories(session: Session) -> Repositories:
         SqlAlchemyReviewRepository(session),
         SqlAlchemyFxRepository(session),
         SqlAlchemyCanonicalRepository(session),
+        SqlAlchemyDecisionRepository(session),
     )
 
 

@@ -4,13 +4,15 @@ from dataclasses import replace
 from datetime import UTC
 from uuid import UUID
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
 from services.domain.canonical import (
     CanonicalBusinessKey,
     CanonicalIdentity,
+    CanonicalPromotionEvent,
     CanonicalRevision,
+    PromotionAction,
 )
 from services.domain.issues import DependencyState
 from services.domain.observations import PriorObservation, Reobservation
@@ -21,7 +23,9 @@ from services.infrastructure.db.derived_repositories import (
 from services.infrastructure.db.models import (
     CandidateRevisionModel,
     CanonicalBusinessKeyModel,
+    CanonicalCurrentModel,
     CanonicalIdentityModel,
+    CanonicalPromotionEventModel,
     CanonicalRevisionModel,
     DependencyRecordModel,
     RawRecordModel,
@@ -155,20 +159,12 @@ class SqlAlchemyCanonicalRepository:
         return _revision(row) if row is not None else None
 
     def prior_observations(self) -> tuple[PriorObservation, ...]:
-        latest = (
-            select(
-                CanonicalRevisionModel.identity_id,
-                func.max(CanonicalRevisionModel.revision_number).label("number"),
-            )
-            .group_by(CanonicalRevisionModel.identity_id)
-            .subquery()
-        )
         rows = self._session.scalars(
             select(CanonicalRevisionModel)
             .join(
-                latest,
-                (CanonicalRevisionModel.identity_id == latest.c.identity_id)
-                & (CanonicalRevisionModel.revision_number == latest.c.number),
+                CanonicalCurrentModel,
+                CanonicalCurrentModel.canonical_revision_id
+                == CanonicalRevisionModel.id,
             )
             .order_by(CanonicalRevisionModel.identity_id)
         )
@@ -265,3 +261,124 @@ class SqlAlchemyCanonicalRepository:
             raise ValueError("Dependency canonical linkage mismatch")
         row.resolved_entity_id = identity_id
         self._session.flush()
+
+    def get_revision(self, revision_id: UUID) -> CanonicalRevision:
+        row = self._session.scalars(
+            select(CanonicalRevisionModel).where(
+                CanonicalRevisionModel.id == revision_id
+            )
+        ).one()
+        return _revision(row)
+
+    def lock_key(self, key_type: str, value: str) -> CanonicalBusinessKey | None:
+        # A transaction lock also covers absent keys, before identity creation.
+        self._session.execute(
+            text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"),
+            {"key": "canonical-key:" + key_type + ":" + value},
+        )
+        key = self.get_key(key_type, value)
+        if key is not None:
+            self._lock_identity(key.identity_id)
+        return key
+
+    def _lock_identity(self, identity_id: UUID) -> None:
+        self._session.scalars(
+            select(CanonicalIdentityModel)
+            .where(CanonicalIdentityModel.id == identity_id)
+            .with_for_update()
+        ).one()
+
+    def next_revision_number(self, identity_id: UUID) -> int:
+        self._lock_identity(identity_id)
+        number = self._session.scalar(
+            select(func.max(CanonicalRevisionModel.revision_number)).where(
+                CanonicalRevisionModel.identity_id == identity_id
+            )
+        )
+        return (number or 0) + 1
+
+    def current(self, identity_id: UUID) -> CanonicalRevision | None:
+        row = self._session.scalar(
+            select(CanonicalRevisionModel)
+            .join(
+                CanonicalCurrentModel,
+                CanonicalCurrentModel.canonical_revision_id
+                == CanonicalRevisionModel.id,
+            )
+            .where(CanonicalCurrentModel.identity_id == identity_id)
+        )
+        return _revision(row) if row else None
+
+    def _append_promotion(self, event: CanonicalPromotionEvent) -> None:
+        self._session.add(
+            CanonicalPromotionEventModel(
+                id=event.id,
+                identity_id=event.identity_id,
+                canonical_revision_id=event.canonical_revision_id,
+                action=event.action,
+                decision_id=event.decision_id,
+                prior_current_revision_id=event.prior_current_revision_id,
+                occurred_at=event.occurred_at,
+            )
+        )
+        self._session.flush()
+
+    def activate(self, event: CanonicalPromotionEvent) -> None:
+        self._lock_identity(event.identity_id)
+        current = self.current(event.identity_id)
+        if (
+            event.action is not PromotionAction.ACTIVATE
+            or (current.id if current else None) != event.prior_current_revision_id
+        ):
+            raise ValueError("activation prior current mismatch")
+        self._append_promotion(event)
+        row = self._session.get(CanonicalCurrentModel, event.identity_id)
+        if row is None:
+            self._session.add(
+                CanonicalCurrentModel(
+                    identity_id=event.identity_id,
+                    canonical_revision_id=event.canonical_revision_id,
+                )
+            )
+        else:
+            row.canonical_revision_id = event.canonical_revision_id
+        self._session.flush()
+
+    def withdraw(self, event: CanonicalPromotionEvent) -> None:
+        self._lock_identity(event.identity_id)
+        row = self._session.get(CanonicalCurrentModel, event.identity_id)
+        if (
+            event.action is not PromotionAction.WITHDRAW
+            or row is None
+            or (row.canonical_revision_id != event.canonical_revision_id)
+        ):
+            raise ValueError("withdrawal requires the current canonical revision")
+        self._append_promotion(event)
+        if event.prior_current_revision_id is None:
+            self._session.delete(row)
+        else:
+            row.canonical_revision_id = event.prior_current_revision_id
+        self._session.flush()
+
+    def promotion_events(
+        self, identity_id: UUID
+    ) -> tuple[CanonicalPromotionEvent, ...]:
+        return tuple(
+            CanonicalPromotionEvent(
+                row.id,
+                row.identity_id,
+                row.canonical_revision_id,
+                PromotionAction(row.action),
+                row.decision_id,
+                row.prior_current_revision_id,
+                row.occurred_at.astimezone(UTC),
+            )
+            for row in self._session.scalars(
+                select(CanonicalPromotionEventModel)
+                .where(CanonicalPromotionEventModel.identity_id == identity_id)
+                .order_by(
+                    CanonicalPromotionEventModel.occurred_at,
+                    CanonicalPromotionEventModel.id,
+                )
+            )
+        )

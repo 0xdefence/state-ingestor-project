@@ -13,7 +13,9 @@ from services.domain.candidates import CandidateRevision
 from services.domain.canonical import (
     CanonicalBusinessKey,
     CanonicalIdentity,
+    CanonicalPromotionEvent,
     CanonicalRevision,
+    PromotionAction,
 )
 from services.domain.ids import deterministic_id, new_id
 from services.domain.issues import (
@@ -217,6 +219,17 @@ def stage_run(
                     CanonicalBusinessKey(identity.id, key[0], key[1], revision.id)
                 )
                 after_insert()
+                write.canonicals.activate(
+                    CanonicalPromotionEvent(
+                        new_id(),
+                        identity.id,
+                        revision.id,
+                        PromotionAction.ACTIVATE,
+                        None,
+                        None,
+                        staged_at,
+                    )
+                )
                 identities[candidate.id] = identity.id
             for dependency in frozen[2]:
                 target = dependency.target_candidate_revision_id

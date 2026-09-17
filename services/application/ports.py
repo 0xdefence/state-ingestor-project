@@ -8,6 +8,7 @@ from typing import BinaryIO, Literal, Protocol, Self
 from uuid import UUID
 
 from services.application.canonical_ports import CanonicalRepository
+from services.application.decision_ports import DecisionRepository
 from services.application.derived_ports import (
     CandidateRepository,
     ClassificationRepository,
@@ -161,9 +162,12 @@ class Repositories:
     reviews: ReviewRepository
     fx: FxRepository
     canonicals: CanonicalRepository
+    decisions: DecisionRepository
 
 
 class UnitOfWork(Protocol):
+    @property
+    def decisions(self) -> DecisionRepository: ...
     @property
     def canonicals(self) -> CanonicalRepository: ...
     @property

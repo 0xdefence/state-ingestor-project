@@ -13,7 +13,9 @@ from services.application.load import stage_run
 from services.domain.canonical import (
     CanonicalBusinessKey,
     CanonicalIdentity,
+    CanonicalPromotionEvent,
     CanonicalRevision,
+    PromotionAction,
 )
 from services.infrastructure.db.models import (
     CanonicalRevisionModel,
@@ -77,6 +79,19 @@ def test_canonical_history_reader_returns_current_typed_revision(engine, tmp_pat
         with pytest.raises(ValueError, match="consecutive"):
             work.canonicals.add_revision(replace(successor, revision_number=3))
         work.canonicals.add_revision(successor)
+        # Appending history alone no longer replaces the current projection.
+        assert work.canonicals.current(old.identity_id) == old
+        work.canonicals.activate(
+            CanonicalPromotionEvent(
+                uuid4(),
+                old.identity_id,
+                successor.id,
+                PromotionAction.ACTIVATE,
+                None,
+                old.id,
+                NOW,
+            )
+        )
         work.commit()
     with uow_for(engine) as work:
         (observation,) = work.canonicals.prior_observations()

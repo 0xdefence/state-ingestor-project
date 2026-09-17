@@ -51,6 +51,7 @@ from services.infrastructure.db.models import (
     DuplicateRelationModel,
     RawRecordModel,
     ReviewItemModel,
+    RunModel,
     TransformationEventModel,
 )
 
@@ -149,6 +150,15 @@ def _review(row: ReviewItemModel) -> ReviewItem:
 class SqlAlchemyCandidateRepository:
     def __init__(self, session: Session) -> None:
         self._session = session
+
+    def terminal(self, raw_record_id: UUID) -> CandidateRevision:
+        row = self._session.scalars(
+            select(CandidateRevisionModel)
+            .where(CandidateRevisionModel.raw_record_id == raw_record_id)
+            .order_by(CandidateRevisionModel.revision_number.desc())
+            .limit(1)
+        ).one()
+        return _candidate(row)
 
     def add(self, revision: CandidateRevision) -> None:
         revision = replace(revision, created_at=revision.created_at.astimezone(UTC))
@@ -274,6 +284,41 @@ class SqlAlchemyClassificationRepository:
     def __init__(self, session: Session) -> None:
         self._session = session
 
+    def get(self, classification_id: UUID) -> ClassificationResult:
+        row = self._session.scalars(
+            select(ClassificationResultModel).where(
+                ClassificationResultModel.id == classification_id
+            )
+        ).one()
+        return _classification(row)
+
+    def blocked(self) -> tuple[ClassificationResult, ...]:
+        rows = self._session.scalars(
+            select(ClassificationResultModel)
+            .join(
+                CandidateRevisionModel,
+                CandidateRevisionModel.id
+                == ClassificationResultModel.candidate_revision_id,
+            )
+            .join(
+                RawRecordModel,
+                RawRecordModel.id == CandidateRevisionModel.raw_record_id,
+            )
+            .join(RunModel, RunModel.id == RawRecordModel.run_id)
+            .where(
+                ClassificationResultModel.readiness == Readiness.BLOCKED_BY_DEPENDENCY,
+                ClassificationResultModel.rules_version == RunModel.rules_version,
+                ClassificationResultModel.fx_snapshot_id.is_not_distinct_from(
+                    RunModel.fx_snapshot_id
+                ),
+            )
+            .order_by(ClassificationResultModel.id)
+            # Serializing rechecks ensures simultaneous parent activations do
+            # not both miss the other transaction's still-uncommitted parent.
+            .with_for_update(of=ClassificationResultModel)
+        )
+        return tuple(_classification(row) for row in rows)
+
     def add(self, result: ClassificationResult) -> None:
         result = replace(result, evaluated_at=result.evaluated_at.astimezone(UTC))
         existing = self._session.get(ClassificationResultModel, result.id)
@@ -380,6 +425,14 @@ class SqlAlchemyClassificationRepository:
 class SqlAlchemyReviewRepository:
     def __init__(self, session: Session) -> None:
         self._session = session
+
+    def get_locked(self, review_id: UUID) -> ReviewItem:
+        row = self._session.scalars(
+            select(ReviewItemModel)
+            .where(ReviewItemModel.id == review_id)
+            .with_for_update()
+        ).one()
+        return _review(row)
 
     def add(self, review: ReviewItem) -> None:
         review = replace(review, created_at=review.created_at.astimezone(UTC))

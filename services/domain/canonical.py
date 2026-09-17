@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 from datetime import datetime
+from enum import StrEnum
 from uuid import UUID
 
 
@@ -43,3 +44,26 @@ class CanonicalBusinessKey:
     key_type: str
     value: str
     effective_revision: UUID
+
+
+class PromotionAction(StrEnum):
+    ACTIVATE = "activate"
+    WITHDRAW = "withdraw"
+
+
+@dataclass(frozen=True, slots=True)
+class CanonicalPromotionEvent:
+    id: UUID
+    identity_id: UUID
+    canonical_revision_id: UUID
+    action: PromotionAction
+    decision_id: UUID | None
+    prior_current_revision_id: UUID | None
+    occurred_at: datetime
+
+    def __post_init__(self) -> None:
+        if any(
+            value.version != 4
+            for value in (self.id, self.identity_id, self.canonical_revision_id)
+        ):
+            raise ValueError("promotion identities require UUIDv4")
