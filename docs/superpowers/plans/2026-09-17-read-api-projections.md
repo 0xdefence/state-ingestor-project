@@ -1,5 +1,7 @@
 # Read API and Application Projections Implementation Plan
 
+> **Superseded on 17 September 2026.** The approved MVP now includes upload, synchronous processing, actionable review decisions, and canonical promotion. Do not execute this read-only plan. Its still-relevant projection requirements will be folded into the consolidated vertical-slice implementation plan after owner review of the amended design specification.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Expose internally consistent workspace, run-detail, and review-queue projections through a typed, read-only local FastAPI service.

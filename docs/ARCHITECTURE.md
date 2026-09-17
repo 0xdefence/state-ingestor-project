@@ -1,8 +1,9 @@
 # Architecture: local CSV ingestion and review
 
-**Status:** Draft canonical implementation specification — pending owner review
+**Status:** Canonical MVP specification — pending owner review of actionable-review amendment
 **Consolidated:** 16 September 2026
-**Scope:** Local CSV → frozen source → parse → normalise → classify → persist issues, review items, and staged canonical candidates → display the run
+**Amended:** 17 September 2026
+**Scope:** Local CSV → process → inspect exceptions → decide → promote approved revisions while preserving complete lineage
 
 Deferred production and governance work is tracked in [`TODO.md`](../TODO.md).
 
@@ -20,24 +21,27 @@ There are no open architecture or UI questions in the current specification. Ite
 
 ## 1. System boundary
 
-The first slice proves the data loop locally. A CLI starts a run from a filesystem CSV. Python application services own parsing, normalisation, classification, persistence, and retry behavior. A local web interface provides the workspace overview, run details, and review queue through a local application API. Postgres stores application state; immutable source bytes live in content-addressed local storage.
+The first slice proves the complete operator loop locally. A nontechnical operations reviewer uploads a CSV, processes it, inspects exceptions, records whole-record decisions, and sees approved revisions become current canonical state. Python application services own parsing, normalisation, classification, persistence, retry, decisions, and promotion. Postgres stores application state; immutable source bytes live in content-addressed local storage.
 
 ```text
-filesystem CSV
+browser or CLI CSV
       |
       v
-CLI / local application API
+local application API
       |
       v
-ingest -> parse -> normalise -> classify -> atomic staged load
-  |         |          |             |             |
-  v         v          v             v             v
-source   raw rows   candidate     verdicts,     staged canonical
-bytes                revisions     issues,       revisions
+ingest -> parse -> normalise -> classify -> automatic promotion
+  |         |          |             |               |
+  v         v          v             v               v
+source   raw rows   candidate     verdicts,     canonical history
+bytes                revisions     issues,       + current view
                                   review items
-                        |
-                        v
-              run detail + review display
+                                      |
+                                      v
+                              operator decision
+                                      |
+                                      v
+                           promotion or no change
 ```
 
 The pipeline has no dependency on HTTP or UI objects. The CLI and local API call the same application services.
@@ -83,9 +87,9 @@ classification_result(
 
 Linked issues explain transformations, repairs, unresolved fields, and failed rules.
 
-### Staged canonical data
+### Canonical data
 
-Canonical identity uses an internal UUID. Business identifiers are governed attributes. Canonical revisions are separate from identity so history can coexist without overwriting earlier interpretations. This slice creates staged revisions only.
+Canonical identity uses an internal UUID. Business identifiers are governed attributes. Canonical revisions are separate from identity so history can coexist without overwriting earlier interpretations. Clean and registered auto-repaired records promote automatically. An approved exception appends a revision; a rebuildable `canonical_current` projection identifies the effective revision. Decisions, revisions, and promotion events are append-only.
 
 ## 3. Pipeline
 
@@ -150,19 +154,37 @@ Each issue code declares severity, applicability, and whether it has an automati
 
 `rules_version` is a deterministic content hash of the registry and relevant normalisation configuration. The application build revision is stored separately.
 
-### 3.5 Load
+### 3.5 Load and automatic promotion
 
-Load runs after classification and stages the complete eligible set in one transaction.
+Load runs after classification and promotes the complete eligible set in one transaction.
+
+The existing persisted terminal run state remains `staged`; the UI labels it **Processed**. The replacement migration adds activation events and `canonical_current` entries for eligible revisions already written by the loader, so the internal state name does not create a second lifecycle.
 
 | Verdict | Initial load behavior |
 |---|---|
-| `CLEAN` | Create a staged canonical revision |
-| `AUTO_REPAIRED` | Create a staged canonical revision with repair lineage |
+| `CLEAN` | Create and activate a canonical revision |
+| `AUTO_REPAIRED` | Create and activate a canonical revision with repair lineage |
 | `NEEDS_REVIEW` | Keep outside canonical tables and create a review item |
 | `REJECTED` | Keep outside canonical tables and create a review item with rejection reasons |
 | `DUPLICATE` | Retain both raw occurrences, keep one canonical identity, and create a review item for the later occurrence |
 
-Dependencies are loaded in order. A clean order whose customer or product is unresolved is `blocked_by_dependency`, remains outside canonical tables, and receives an explanatory dependency record. Its own verdict and readiness remain separate concepts.
+Dependencies are loaded in order. A clean order whose customer or product is unresolved is `blocked_by_dependency`, remains outside canonical tables, and receives an explanatory dependency record. It appears as **Waiting for another record**, not as an approvable exception. Promoting the referenced dependency re-evaluates its blocked dependants in the same command flow and automatically promotes any that become eligible. Its own verdict and readiness remain separate concepts.
+
+### 3.6 Review and decide
+
+Review operates on a complete record, not on individual issues. The displayed evidence and submitted command name the exact terminal candidate revision. Legal actions depend on the classified outcome:
+
+| Outcome | Legal actions | Result |
+|---|---|---|
+| `NEEDS_REVIEW` or changed-value conflict | Approve, reject | Approval promotes the candidate; rejection preserves existing canonical state |
+| `REJECTED` | Acknowledge, reject | Records a reviewed outcome; candidate remains permanently outside canonical data |
+| `DUPLICATE` | Acknowledge, reject | Records a reviewed outcome; later duplicate remains outside canonical data |
+
+The operator name is always recorded. Rejection requires a reason. Approval, acknowledgement, and reversal may include one. Each command has an idempotency key and expected decision sequence.
+
+The decision service locks the review item and rechecks its terminal revision, classification, dependency readiness, current decision sequence, and relevant canonical identity. It appends the decision and any canonical revision/promotion event in one transaction. Stale requests return `409 Conflict` and make no change.
+
+Approving a new identity creates canonical revision 1. Approving changed values for an existing identity appends the next revision, preserves the previous revision, and makes the approved revision current. A reversal submits the next legal effective outcome and references the decision it supersedes: reversing approval records rejection plus withdrawal, while reversing rejection records approval plus activation. It then moves `canonical_current` back to the applicable prior revision or removes the current projection. No evidence or history is deleted.
 
 ## 4. Duplicate and conflict rules
 
@@ -181,7 +203,7 @@ Parse and normalise use configurable atomic batches. Their writes have determini
 
 Classification restarts for the whole run because it needs the complete candidate set. Results are keyed by candidate revision and rules version, so rerunning it creates no duplicate verdicts or issues.
 
-Canonical loading is atomic. A failed load rolls back all staged canonical writes while leaving frozen sources, raw records, candidate revisions, issues, classifications, and checkpoints available for retry. `classified` with `load_failed` is a valid recoverable state.
+Canonical loading is atomic. A failed load rolls back all canonical writes from that attempt while leaving frozen sources, raw records, candidate revisions, issues, classifications, and checkpoints available for retry. `classified` with `load_failed` is a valid recoverable state.
 
 Run processing states include stage-specific failure states and the last completed checkpoint. A failed parse batch is invisible; earlier committed batches remain inspectable as part of an incomplete run.
 
@@ -195,15 +217,36 @@ Run processing states include stage-specific failure states and the last complet
 | `candidate_revision` | candidate revision service | Append-only |
 | `classification_result`, `data_quality_issue` | classify | Append-only per revision/rules version |
 | `review_item` | review service | Created with stable reasons and source references |
-| canonical identity/revision | canonical command service | Identity retained; revisions append-only |
+| `review_decision` | review decision service | Append-only ordered decisions; later decisions supersede by reference |
+| canonical identity/revision/business key | canonical command service | Identity retained; revisions append-only |
+| `canonical_promotion_event` | canonical command service | Append-only activation and withdrawal history |
+| `canonical_current` | canonical command service | Rebuildable projection updated transactionally from promotion events |
 | `fx_rate` | FX fixture importer | Immutable once referenced by a run |
 | pipeline event log | event writer | Append-only |
 
 `run.counts` is an immutable end-of-classification snapshot.
 
+The effective review state comes from the latest decision: `pending`, `approved`, `rejected`, or `acknowledged`. A record being inspected does not acquire a durable state merely because a browser has it open.
+
 ## 7. FX data
 
 The first slice seeds a pinned ECB-history fixture with provenance and versioned rate rows. The pipeline never performs a network fetch. Orders use the stored rate for their order date; lifetime spend uses the run's fixed snapshot. Missing rates preserve the source amount, leave the GBP value unresolved, and create `FX_RATE_UNAVAILABLE`.
+
+### 7.1 Local API contract
+
+The FastAPI adapter exposes the complete local loop:
+
+| Method and path | Purpose |
+|---|---|
+| `POST /api/uploads` | Accept multipart CSV content and record/reuse the frozen source occurrence and run |
+| `POST /api/runs/{run_id}/process` | Advance legal stages synchronously until review-ready/complete or recoverably failed |
+| `GET /api/workspace` | Return scoped attention, failure, outcome, and recent-run projections |
+| `GET /api/runs/{run_id}` | Return run, occurrence, stage, record, decision, and evidence details |
+| `GET /api/reviews` | Return a scoped/filtered review queue |
+| `GET /api/reviews/{review_item_id}` | Return exact evidence, legal actions, decision history, and canonical effect |
+| `POST /api/reviews/{review_item_id}/decisions` | Append an idempotent decision and atomically apply promotion or reversal |
+
+Processing is synchronous for the local MVP; the UI polls the run projection while a request is active or after reconnecting. Upload and decision mutations require idempotency keys. Responses use one typed error envelope. Validation failures return `422`, missing resources `404`, and stale decision preconditions `409` with current references for refresh.
 
 ## 8. Operator interface
 
@@ -237,6 +280,7 @@ Error copy explains what happened, its effect, and the available next step. Susp
 
 The landing page combines:
 
+- CSV upload and processing controls;
 - outstanding review work;
 - failed or blocked processing;
 - an outcome breakdown for the active file scope;
@@ -259,7 +303,7 @@ Every run has a stable page showing:
 
 ### 8.5 Review queue
 
-The review surface uses a persistent queue with a detail panel. Moving between items preserves queue and filter context. The detail panel explains the plain-language reason, raw and interpreted values, pipeline position, dependencies, provenance, and technical evidence.
+The review surface uses a persistent queue with a detail panel. Moving between items preserves queue and filter context. The detail panel explains the plain-language reason, raw and interpreted values, pipeline position, dependencies, prior canonical state where relevant, provenance, technical evidence, decision history, and legal actions.
 
 Outstanding-review items show:
 
@@ -269,26 +313,26 @@ Outstanding-review items show:
 - source line where applicable;
 - review state.
 
+`NEEDS_REVIEW` and conflict items offer **Approve** and **Reject**. `REJECTED` and `DUPLICATE` items offer **Acknowledge** and **Reject**. The form records an operator name and requires a rejection reason. While a decision is saving, repeat submission is disabled. Success updates both the queue and canonical effect. A stale `409` retains entered text, refreshes the evidence, and explains that the item changed before the decision was saved.
+
 The filename links to `/runs/:runId?review=:reviewItemId`, opening the individual run while retaining the selected review item. Link styling remains visibly interactive without relying only on color.
 
 ### 8.6 File scope
 
-All aggregate counts, charts, filters, and queue results inherit one explicit scope:
+All aggregate counts, outcome breakdowns, filters, and queue results inherit one explicit scope:
 
 - **Current file:** the run currently open.
 - **Selected files:** a reviewer-defined set chosen through a searchable multi-select.
 - **All files:** every available run.
 
-The file-selection panel appears only for **Selected files**. Selected filenames appear as removable chips, and the closed control reports the selected count. The visible page heading and chart label repeat the active scope.
+The file-selection panel appears only for **Selected files**. Selected filenames appear as removable chips, and the closed control reports the selected count. The visible page heading and outcome label repeat the active scope.
 
 ### 8.7 Outcome breakdown
 
-- Place a color-coded donut chart on the right of the main breakdown.
-- State the file scope and total record count in the chart title.
-- Reveal the exact label, count, and percentage for each segment on pointer hover and keyboard focus.
-- Mirror all segments in a persistent text legend and an accessible non-chart summary.
-- Reserve enough SVG view-box and container padding to prevent emphasized segments and tooltips from being clipped.
-- Make each count and legend item open the review queue with the corresponding scope and filter.
+- State the file scope and total record count in the breakdown title.
+- Show the exact label and count for every outcome, pairing semantic color with visible text.
+- Make each count open the review queue with the corresponding scope and filter.
+- Keep the data contract suitable for a later chart, but do not require a chart in the MVP.
 
 ### 8.8 Recent runs
 
@@ -337,11 +381,12 @@ Every relevant screen and component defines:
 - partial batch progress;
 - empty workspace;
 - empty filtered results;
-- successful staged run;
+- successfully processed run with automatic promotions;
 - run in progress;
 - recoverable stage failure;
 - load failure after classification;
 - unresolved review item;
+- saving, saved, rejected, acknowledged, reversed, and stale-decision states;
 - rejected structural record;
 - duplicate;
 - conflict;
@@ -356,25 +401,21 @@ Every relevant screen and component defines:
 - Every flow is keyboard-operable with visible `:focus-visible` treatment.
 - Selection and stage changes move or announce focus predictably.
 - Tooltips are keyboard-reachable and contain no essential information unavailable elsewhere.
-- Charts include text legends and accessible summaries.
+- Outcome totals use accessible text and semantic links.
 - Controls use semantic HTML before ARIA.
-- Interactive targets are at least 24 px visually or through an expanded hit area; mobile targets are at least 44 px.
-- Motion honors `prefers-reduced-motion` and is limited to user-triggered state changes.
+- Interactive targets are at least 24 px visually or through an expanded hit area.
+- Essential processing and save feedback honors `prefers-reduced-motion`.
 - Responsive layouts preserve filename, reason, and current status before secondary metadata.
 
 ### 8.13 Design and implementation method
 
 The Vercel/Geist direction is fixed for this operational interface. The design workflow is:
 
-1. research and reference lock with Refero;
-2. surface and state shaping with Impeccable;
-3. a plain-language pass with Humanizing UI Jargon;
-4. an anti-template critique with Frontend Design;
-5. interaction feedback with Emil Design Engineering;
-6. purposeful motion only after workflows are stable, followed by motion review;
-7. joint desktop and mobile validation;
-8. accessibility, responsive, empty/error-state, and final-polish passes;
-9. optional Figma transfer or implementation from an approved Figma source.
+1. surface and state shaping with Impeccable;
+2. a plain-language pass with Humanizing UI Jargon;
+3. an anti-template critique with Frontend Design;
+4. interaction feedback with Emil Design Engineering;
+5. keyboard, basic accessibility, responsive overflow, and empty/error-state validation.
 
 Awesome Designs may be used to audit the selected direction but does not replace it. Taste Skill is reserved for non-dashboard surfaces such as landing, editorial, portfolio, and marketing pages.
 
@@ -397,20 +438,20 @@ docs/                     canonical architecture specification
 
 ## 10. Build order
 
-1. Domain types, structured candidate values, rule registry, and deterministic IDs.
-2. Filesystem ingest and immutable content-addressed source storage.
-3. Resumable parse and normalise with checkpoints.
-4. Barrier classification, issues, repairs, duplicates, and conflicts.
-5. Atomic staged canonical load and dependency blocking.
-6. Local API, workspace overview, run-detail view, and review queue.
-7. Required UI states, accessibility behavior, and responsive behavior.
-8. Golden fixture and failure/retry tests for the complete local loop.
+The first five foundation/derived stages are implemented through atomic canonical staging. The approved replacement work is:
+
+1. close the existing pipeline with independent Task 7 review, orchestration, the frozen-sample proof, and one representative recovery proof;
+2. add review decisions, canonical promotion/current projection, activate/backfill the eligible revisions produced by the existing loader, reversal, idempotency, and stale-write protection;
+3. expose the seven product endpoints through one consolidated FastAPI adapter;
+4. build the workspace upload/process and attention overview;
+5. build run evidence and actionable review workflows;
+6. prove the complete vertical slice end to end and run the repository quality gates.
 
 The golden result must explain every physical source line and trace each staged or reviewed outcome through raw evidence, candidate revisions, rules, issues, and classification.
 
 ## 11. Required automated test contract
 
-Implementation follows red-green-refactor. Each test below must be written and observed failing for the expected reason before its production behavior is added. Tests assert public behavior and persisted state rather than private calls. Core domain behavior uses real objects; fakes are permitted only at filesystem, clock, transaction-failure, and network boundaries.
+Implementation follows red-green-refactor. Existing named tests below remain the regression contract. New product work adds the focused tests in section 11.9 without multiplying every UI and domain combination into a separate matrix. Tests assert public behavior and persisted state rather than private calls. Core domain behavior uses real objects; fakes are permitted only at filesystem, clock, transaction-failure, and network boundaries.
 
 The Python suite uses `pytest`. Web component tests use Vitest, Testing Library, `user-event`, and `axe-core`. Unit suites perform no network access and do not depend on test execution order. Time-sensitive tests use a fixed clock of `2026-09-16T12:00:00Z` and explicitly named timezones.
 
@@ -528,11 +569,11 @@ Files: `tests/unit/application/test_queries.py` and `tests/unit/api/test_present
 
 | ID and test name | Required assertion |
 |---|---|
-| `API-01 test_workspace_current_file_scope` | Counts, chart data, recent runs, and review results contain only the current run. |
+| `API-01 test_workspace_current_file_scope` | Counts, outcome data, recent runs, and review results contain only the current run. |
 | `API-02 test_workspace_selected_files_scope` | Results contain the exact selected run IDs, reject an empty selection, and report the selected count. |
 | `API-03 test_workspace_all_files_scope` | Results aggregate all runs visible to the local application without applying a hidden current-file filter. |
 | `API-04 test_scope_counts_use_one_classification_snapshot` | Every displayed total and segment derives from the same immutable `run.counts` snapshots and the segment sum equals the displayed total. |
-| `API-05 test_run_detail_preserves_evidence_lineage` | The response relates source occurrence, raw record, candidate chain, transformations, issues, classification, readiness, review item, and staged revision without copying or losing identifiers. |
+| `API-05 test_run_detail_preserves_evidence_lineage` | The response relates source occurrence, raw record, candidate chain, transformations, issues, classification, readiness, review item, canonical revision, decisions, and promotion events without copying or losing identifiers. |
 | `API-06 test_review_filter_combines_scope_and_state` | State filters operate inside the active file scope and return stable reason and source references. |
 | `API-07 test_internal_values_have_plain_language_fallback` | Known internal values use the registered display map; an unknown snake-case value becomes a readable label while its raw value remains in technical evidence. |
 | `API-08 test_timestamps_include_instant_and_timezone` | Presenter output contains an unambiguous machine instant and an absolute localized display value with timezone; it never emits relative time. |
@@ -553,7 +594,7 @@ Files: `apps/web/src/**/*.test.tsx`
 | `UI-07 selecting_stage_replaces_detail_panel` | Keyboard activation updates the panel heading, evidence, result, timestamp, and selected state without losing the review item. |
 | `UI-08 normalisation_copy_does_not_imply_reversal` | The interface contains `Normalisation details` and does not render `de-normalise`. |
 | `UI-09 timestamps_are_absolute_plain_text` | Evidence and recent-run timestamps include date, time, and timezone, contain no relative-time words, and are not rendered with status-pill semantics. |
-| `UI-10 chart_has_equivalent_text_and_focus_details` | Every donut segment has a matching legend item and accessible summary; focus exposes the same label, count, and percentage as hover. |
+| `UI-10 outcome_breakdown_is_textually_complete` | Every outcome has a visible label and count, semantic state is not conveyed by color alone, and each count links to its filtered review result. |
 | `UI-11 semantic_status_is_not_color_only` | Every status color is accompanied by visible text and an accessible name. |
 | `UI-12 empty_loading_failure_and_stale_states_are_distinct` | Each supplied state renders its specified message and next action without reusing a misleading success or empty state. |
 | `UI-13 long_filename_does_not_hide_reason_or_status` | At narrow desktop and mobile container widths, filename truncation preserves accessible full text while reason and current status remain visible. |
@@ -562,7 +603,25 @@ Files: `apps/web/src/**/*.test.tsx`
 | `UI-16 primary_screens_have_no_axe_violations` | Workspace, run page, and review queue fixtures produce zero automated axe violations in default, loading, empty, and failure states. |
 | `UI-17 duplicate_submission_is_visible_on_run_page` | A run with multiple occurrences shows a plain-language exact-file notice, total submission count, and expandable filenames, actor labels, and absolute ingest timestamps. |
 
-### 11.9 Golden fixture integration test
+### 11.9 Decision, promotion, and vertical-slice tests
+
+The replacement implementation plan must cover these behaviors with focused domain/integration/component tests:
+
+| ID | Required assertion |
+|---|---|
+| `DEC-01` | Approving the current terminal `NEEDS_REVIEW` candidate appends one decision, one canonical revision, one activation event, and updates `canonical_current` in one transaction. |
+| `DEC-02` | Approving changed values for an existing business identity appends the next canonical revision and preserves the prior revision and complete lineage. |
+| `DEC-03` | Rejecting a reviewable candidate records operator and required reason and leaves canonical state unchanged. |
+| `DEC-04` | Acknowledging or rejecting `REJECTED` and `DUPLICATE` records never creates a canonical identity or revision. |
+| `DEC-05` | Replaying the same decision idempotency key and payload returns the original result; reusing it for a different payload is rejected. |
+| `DEC-06` | A stale candidate revision or decision sequence returns conflict and creates no decision, revision, event, or projection change. |
+| `DEC-07` | Reversing approval appends a superseding decision and event and restores the prior current revision, or removes the projection when none existed. |
+| `API-10` | Multipart upload and process endpoints reuse the same application commands as the CLI and report duplicate occurrences accurately. |
+| `API-11` | Review detail reports exact evidence, legal actions, decision history, and canonical effect; the decision endpoint uses one stable error envelope. |
+| `UI-18` | The operator can upload/process, open an exception, inspect evidence, submit a legal decision, and see the updated queue and canonical result using the keyboard. |
+| `E2E-01` | One local browser flow proves upload → process → inspect → decide → promote → reverse, including duplicate-upload and recoverable-retry checks. |
+
+### 11.10 Golden fixture integration test
 
 File: `tests/integration/test_messy_sample_data.py`
 
@@ -583,7 +642,7 @@ The golden test asserts:
 
 [`data/messy_sample_data.schema.md`](../data/messy_sample_data.schema.md) inventories the complete 54-line fixture, including every structural exception and the governed outcome of every semantic variant. This architecture remains authoritative for product behavior; any fixture change must update the CSV hash, schema inventory, and golden expectations together.
 
-### 11.10 Required test commands
+### 11.11 Required test commands
 
 The repository must expose these stable commands once implementation begins:
 

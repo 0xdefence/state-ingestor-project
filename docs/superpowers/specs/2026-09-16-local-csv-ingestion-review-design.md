@@ -1,8 +1,8 @@
 # Local CSV Ingestion and Review Design Specification
 
-**Status:** Approved for implementation
+**Status:** Approved product design — pending owner review of this consolidated amendment
 **Date:** 16 September 2026
-**Amended:** 17 September 2026 — exact-file submission deduplication
+**Amended:** 17 September 2026 — actionable review MVP and consolidated vertical slice
 **Approved:** 17 September 2026
 **Implements:** [`docs/ARCHITECTURE.md`](../../../docs/ARCHITECTURE.md)
 **Fixture contract:** [`data/messy_sample_data.schema.md`](../../../data/messy_sample_data.schema.md)
@@ -10,28 +10,30 @@
 
 ## 1. Purpose
 
-Build the first complete local ingestion-and-review slice for mixed-record CSV files. The system freezes source bytes, preserves a complete raw representation, derives typed candidate revisions, classifies cross-record outcomes, stages eligible canonical revisions atomically, and presents the run to a nontechnical operations reviewer.
+Build the first complete local review-and-decision slice for mixed-record CSV files. A nontechnical operations reviewer can upload and process a file, inspect exceptions, approve or reject reviewable candidates, acknowledge structurally unusable records, and see approved revisions become the current canonical state.
 
-The design optimizes for traceability and safe retry. Every displayed or staged value must remain connected to its frozen source, raw fields, transformations, issues, rules version, and candidate revision.
+The design optimizes for traceability and safe retry. Every displayed, decided, or canonical value remains connected to its frozen source, raw fields, transformations, issues, rules version, candidate revision, operator decision, and promotion event.
 
 ## 2. Scope
 
 The slice includes:
 
-- filesystem CSV ingestion through a CLI;
+- browser upload and processing, with the CLI retained as a diagnostic adapter;
 - content-addressed local source storage;
 - exact-file submission deduplication with preserved occurrence history;
 - immutable raw records with physical-line spans;
 - typed customer, product, and order candidates;
 - deterministic normalization, FX conversion, classification, and registered repair rules;
 - durable batch checkpoints and idempotent retry;
-- atomic staging of eligible canonical revisions;
+- automatic canonical promotion of eligible clean and registered auto-repaired revisions;
+- whole-record review decisions for exceptions;
+- append-only canonical promotion, reversal, and current-state projection;
 - Postgres persistence and migrations;
-- a local read API;
+- a local read/write API;
 - the workspace overview, run page, and review queue;
-- the exact automated test contract in architecture section 11.
+- one end-to-end proof of upload, processing, decision, promotion, duplicate handling, retry, and reversal, alongside the existing focused tests.
 
-The slice ends at staged canonical data and read-only review display. Human editing, approval, publication, logical deletion, authentication, production hosting, remote object storage, scheduled FX updates, and expanded audit governance remain in [`TODO.md`](../../../TODO.md).
+The slice ends at an operator decision and its canonical effect. Value editing, per-issue decisions, bulk actions, hard or logical deletion, authentication, multi-user permissions, background workers, production hosting, remote object storage, scheduled FX updates, configurable business rules, advanced charts, and expanded audit governance remain in [`TODO.md`](../../../TODO.md).
 
 ## 3. Technology decisions
 
@@ -48,7 +50,7 @@ The slice ends at staged canonical data and read-only review display. Human edit
 | Web | React, TypeScript, Vite, and Bun | Focused client application with fast tests and no server-rendering requirement for the local slice. |
 | UI data access | TanStack Query | Cache, stale/refetch states, and explicit request lifecycles required by the UI contract. |
 | UI styling | CSS Modules plus shared design tokens | Direct control over Geist-based presentation without introducing a competing component aesthetic. |
-| Charts | Accessible SVG component owned by the application | The approved donut has small, fixed requirements; a charting dependency would add unnecessary behavior and styling. |
+| Charts | Deferred | The MVP uses accessible textual outcome counts and adds no charting dependency. |
 | Python tests | pytest | Matches the canonical test contract. |
 | Web tests | Vitest, Testing Library, `user-event`, and `axe-core` | Component behavior, keyboard flow, and accessibility checks. |
 
@@ -179,21 +181,24 @@ The raw JSONB fields contain arrays and parser facts, not business state. Databa
 | `classification_result` | deterministic UUID PK, revision FK, rules version, FX snapshot FK, verdict, readiness, assessed timestamp, unique revision/rules/snapshot |
 | `dependency_record` | UUID PK, classification FK, dependency kind, referenced business value, resolved entity FK when present, state |
 | `duplicate_relation` | UUID PK, later raw FK, earlier raw FK, comparison scope |
-| `review_item` | deterministic UUID PK, run FK, raw FK, classification FK, display state `open`, stable reason refs, created timestamp |
+| `review_item` | deterministic UUID PK, run FK, raw FK, classification FK, stable reason refs, created timestamp |
+| `review_decision` | UUID PK, review-item FK, candidate-revision FK, monotonic sequence, optional superseded-decision FK, outcome, operator name, reason, idempotency key, created timestamp; unique review-item/sequence and idempotency key |
 
-Review items are read-only in this slice. Their `open` state is a display fact, not the deferred governed workflow described in `TODO.md`.
+The effective review state is derived from the latest decision. A review item with no decision is `pending`; later states are `approved`, `rejected`, or `acknowledged`. Decisions never edit or delete earlier decisions. A stale command that no longer targets the current terminal candidate or decision sequence fails without side effects.
 
 ### 6.3 Canonical and FX tables
 
 | Table | Essential keys and constraints |
 |---|---|
 | `canonical_identity` | UUID PK, entity type, created timestamp |
-| `canonical_revision` | UUID PK, identity FK, candidate-revision FK, revision number, staged timestamp, unique identity/revision number |
+| `canonical_revision` | UUID PK, identity FK, candidate-revision FK, revision number, promoted timestamp, unique identity/revision number |
 | `canonical_business_key` | identity FK, key type, value, effective revision, governed uniqueness constraint |
+| `canonical_promotion_event` | UUID PK, identity FK, canonical-revision FK when activating, review-decision FK when operator-driven, action `activate` or `withdraw`, prior-current revision FK, timestamp; append-only |
+| `canonical_current` | identity PK, current canonical-revision FK; rebuildable projection updated in the same transaction as a promotion event |
 | `fx_snapshot` | UUID PK, manifest hash, effective run timestamp, source label |
 | `fx_rate` | snapshot FK, currency, publication date, EUR reference rate, source provenance; immutable after reference |
 
-Canonical payload is read through its candidate revision rather than copied into a second mutable row. Canonical revisions record governed identity history and the exact accepted candidate.
+Canonical payload is read through its candidate revision rather than copied into a second mutable row. Canonical revisions record governed identity history and the exact accepted candidate. `canonical_current` is the only mutable convenience projection; append-only revisions, decisions, and promotion events are the source from which it can be rebuilt.
 
 ## 7. Application ports and services
 
@@ -229,9 +234,12 @@ ingest_file(command: IngestFile, uow: UnitOfWork, source_store: SourceStore, clo
 process_run(command: ProcessRun, uow_factory: UnitOfWorkFactory, source_store: SourceStore, clock: Clock) -> RunResult
 retry_run(command: RetryRun, uow_factory: UnitOfWorkFactory, source_store: SourceStore, clock: Clock) -> RunResult
 reprocess_source(command: ReprocessSource, uow: UnitOfWork, clock: Clock) -> IngestResult
+decide_review(command: DecideReview, uow: UnitOfWork, clock: Clock) -> DecisionResult
 ```
 
-`IngestResult` contains `source_file_id`, `source_occurrence_id`, `run_id`, `source_reused`, `run_reused`, `duplicate_upload`, and an optional resume checkpoint. The CLI exposes `ingest`, `process`, `retry`, and `reprocess` commands. `ingest --process` is a convenience composition of the first two commands and does not create an alternative pipeline path. For a duplicate incomplete run it invokes `retry_run` on the returned run; for a completed run it performs no additional pipeline work.
+`IngestResult` contains `source_file_id`, `source_occurrence_id`, `run_id`, `source_reused`, `run_reused`, `duplicate_upload`, and an optional resume checkpoint. `process_run` follows legal stage transitions until the run reaches review-ready/canonical-ready state or a recoverable failure. The local API and CLI call these same application services.
+
+`DecideReview` names the review item, terminal candidate revision, expected current decision sequence, outcome, operator name, reason, and idempotency key. `approve` is legal only for a reviewable candidate such as `NEEDS_REVIEW` or a conflict. `acknowledge` and `reject` are legal for `REJECTED` and `DUPLICATE`; these outcomes never create canonical data. A superseding decision reverses an earlier decision without mutating it.
 
 ### 7.3 Queries
 
@@ -239,9 +247,10 @@ reprocess_source(command: ReprocessSource, uow: UnitOfWork, clock: Clock) -> Ing
 get_workspace(query: WorkspaceQuery) -> WorkspaceView
 get_run_detail(query: RunDetailQuery) -> RunDetailView
 get_review_queue(query: ReviewQueueQuery) -> ReviewQueueView
+get_review_detail(query: ReviewDetailQuery) -> ReviewDetailView
 ```
 
-`WorkspaceQuery` requires one explicit scope variant: current run ID, a non-empty tuple of selected run IDs, or all runs. Counts, chart segments, recent runs, and review results use the same scope predicate.
+`WorkspaceQuery` requires one explicit scope variant: current run ID, a non-empty tuple of selected run IDs, or all runs. Counts, outcome buckets, recent runs, and review results use the same scope predicate.
 
 ## 8. Pipeline design
 
@@ -256,7 +265,7 @@ created
   -> loading -> staged
 ```
 
-Each active stage has a corresponding recoverable failure fact. A load failure returns the primary state to `classified` and sets `load_failed`; it does not erase classifications. Illegal transitions are rejected before side effects.
+`staged` remains the persisted run-state name delivered by the existing pipeline; the product label is **Processed** and the load transaction activates the eligible canonical revisions. Each active stage has a corresponding recoverable failure fact. A load failure returns the primary state to `classified` and sets `load_failed`; it does not erase classifications. Illegal transitions are rejected before side effects.
 
 ### 8.2 Ingest
 
@@ -296,11 +305,25 @@ Rules handle SKU zero-padding, order line-total repair, relations, referrals, in
 
 Classification writes results, issues, relations, and review items idempotently by deterministic IDs.
 
-### 8.6 Load
+### 8.6 Load and automatic promotion
 
-Load calculates the full eligible set before opening its write transaction. It stages `CLEAN` and terminal `AUTO_REPAIRED` candidate revisions whose readiness is `eligible`. All canonical identity, key, and revision writes commit together.
+Load calculates the full eligible set before opening its write transaction. It promotes `CLEAN` and terminal `AUTO_REPAIRED` candidate revisions whose readiness is `eligible`. All canonical identity, key, revision, activation-event, and current-projection writes commit together.
 
-`NEEDS_REVIEW`, `REJECTED`, `DUPLICATE`, and dependency-blocked candidates create no canonical write. Any load error rolls back the complete staged set and records `load_failed` outside the failed transaction.
+`NEEDS_REVIEW`, `REJECTED`, `DUPLICATE`, and dependency-blocked candidates create no canonical write. A blocked candidate is displayed as **Waiting for another record** rather than offered for approval. When a referenced dependency is promoted, the command re-evaluates blocked dependants and automatically promotes any that become eligible. Any load error rolls back the complete promoted set and records `load_failed` outside the failed transaction.
+
+### 8.7 Review decisions and promotion
+
+Review is a whole-record decision over the exact terminal candidate and evidence shown to the operator.
+
+| Candidate outcome | Available decisions | Canonical effect |
+|---|---|---|
+| `NEEDS_REVIEW` or changed-value conflict | Approve or reject | Approval promotes the candidate; rejection leaves current canonical state unchanged |
+| `REJECTED` structural shell | Acknowledge or reject | Permanently remains outside canonical data |
+| `DUPLICATE` | Acknowledge or reject | Permanently remains outside canonical data |
+
+The command locks the review item, verifies the candidate and latest decision sequence are still current, appends the decision, and applies any canonical effect in one transaction. Approving a new business identity creates canonical revision 1. Approving a changed-value conflict appends the next revision to the existing identity and makes it current. Previous canonical revisions remain immutable and linked.
+
+A reversal submits the next legal effective outcome with a reference to the decision it supersedes. Reversing approval therefore records a rejecting decision and withdrawal event; reversing rejection records an approving decision and activation event. The command moves `canonical_current` back to the applicable prior revision, or removes the current projection when no prior revision exists. It never deletes a decision, candidate, canonical revision, or source record.
 
 ## 9. Error behavior
 
@@ -314,54 +337,59 @@ Errors use stable typed codes and preserve causal detail for logs:
 | Classify | incomplete candidate barrier, invalid rule registry | No partial active-rules classification set |
 | Load | constraint or injected transaction failure | Entire canonical set rolled back; state `classified` plus `load_failed` |
 | Query | unknown run, invalid/empty selected scope | Typed 404 or 422 API response with plain-language message |
+| Decision | stale candidate/sequence, illegal outcome, duplicate idempotency key with different payload | Typed 409 or 422; no decision or canonical side effect |
 
 Data-quality problems are persisted outcomes, not thrown application errors. A malformed record should become reviewable evidence whenever its source can be preserved safely.
 
 ## 10. Local API
 
-The FastAPI process serves read-only product endpoints:
+The FastAPI process serves the complete local product loop:
 
 | Method and path | Result |
 |---|---|
+| `POST /api/uploads` | Multipart CSV upload; freezes bytes and returns occurrence, run, reuse, and duplicate-submission facts |
+| `POST /api/runs/{run_id}/process` | Idempotently advances the run through legal stages until review-ready, complete, or recoverably failed |
 | `GET /api/workspace` | Workspace view for `scope=current|selected|all`; current uses `run_id`, selected uses repeated `run_id` parameters |
-| `GET /api/runs/{run_id}` | Run metadata, all linked source occurrences, duplicate-submission summary, stages, counts, records, selected review item, and evidence graph |
-| `GET /api/review-items` | Scoped and filtered queue plus selected-item details |
+| `GET /api/runs/{run_id}` | Run metadata, linked occurrences, duplicate summary, stages, counts, records, decisions, and evidence graph |
+| `GET /api/reviews` | Scoped and filtered queue with effective decision states |
+| `GET /api/reviews/{review_item_id}` | Exact candidate, evidence, available actions, decision history, and canonical effect |
+| `POST /api/reviews/{review_item_id}/decisions` | Append an idempotent decision and atomically apply any promotion or reversal |
 | `GET /api/health` | Local process and database connectivity status |
 
-The browser does not start runs or mutate review decisions in this slice. CLI commands own processing. API response models carry internal codes alongside plain display labels, absolute ISO instants, localized display timestamps, and explicit timezones.
+Upload and decision mutations require idempotency keys. Decision requests also carry the exact candidate revision and expected decision sequence. A stale request returns `409 Conflict` with enough current state for the client to refresh. API response models carry internal codes alongside plain display labels, absolute ISO instants, localized display timestamps, and explicit timezones.
 
 ## 11. Operator interface
 
 ### 11.1 Application shell
 
-The client uses routes `/`, `/runs/:runId`, and `/review`. The query string stores shareable context: scope, selected run IDs, filters, and selected review item. Route parsing rejects malformed state and falls back to the nearest valid view with an explanatory message.
+The client uses routes `/`, `/runs/:runId`, and `/reviews`. The query string stores shareable context: scope, selected run IDs, filters, and selected review item. Route parsing rejects malformed state and falls back to the nearest valid view with an explanatory message.
 
 ### 11.2 Workspace
 
-The workspace renders, in document order:
+The workspace begins with CSV upload and process controls, then renders in document order:
 
 1. outstanding review and failure summary;
-2. active-scope breakdown with accessible donut;
+2. active-scope textual outcome breakdown;
 3. outstanding-review file links;
 4. compact recent-runs table.
 
-The scope control exposes exactly `Current file`, `Selected files`, and `All files`. The selected-file search appears only for the selected scope. All panels consume a single `WorkspaceView` so their totals cannot represent different snapshots.
+The scope control exposes exactly `Current file`, `Selected files`, and `All files`. The selected-file search appears only for the selected scope. All panels consume a single `WorkspaceView` so their totals cannot represent different snapshots. The MVP does not require a chart; a future chart must use these same counts and accessible text.
 
 ### 11.3 Run and review
 
 The run page shows file identity, absolute timestamp, count summary, pipeline stages, records, and evidence details. When exact content has been submitted more than once, it shows a plain-language exact-file notice, total submission count, and an expandable list of every filename, actor label, and absolute ingest timestamp. `/runs/:runId?review=:reviewItemId` selects the requested review item without discarding run context.
 
-The review route uses a queue/detail split. Keyboard selection updates the detail panel, announces the new item, and retains filter/scope position. Pipeline-stage buttons are enabled only for reached stages with evidence; future stages are disabled and labelled not reached.
+The review route uses a queue/detail split. Keyboard selection updates the detail panel, announces the new item, and retains filter/scope position. The detail shows the exact source value, interpreted candidate, reasons, dependencies, prior canonical value when present, decision history, and currently legal actions. Approval/rejection/acknowledgement requires an operator name; rejection requires a reason. A successful decision updates the queue and canonical result. A stale `409` preserves input, refreshes the detail, and explains that the record changed before the decision was saved. Pipeline-stage buttons are enabled only for reached stages with evidence; future stages are disabled and labelled not reached.
 
 ### 11.4 Presentation system
 
-Shared tokens define Geist typography, neutral surfaces, borders, nested radii, semantic status colors, focus rings, hit areas, and motion duration. Components always pair color with text. Dates are absolute, plain grey text rather than pills. Filters use light-grey fields. The donut reserves SVG padding for focus/hover emphasis and exposes an equivalent legend and summary.
+Shared tokens define Geist typography, neutral surfaces, borders, nested radii, semantic status colors, focus rings, and hit areas. Components always pair color with text. Dates are absolute, plain grey text rather than pills. Filters use light-grey fields. Motion is limited to feedback needed to understand processing and saved decisions.
 
 All component states and accessibility criteria from architecture sections 8.11 and 8.12 are acceptance requirements.
 
 ## 12. Test design
 
-Architecture section 11 is the authoritative behavior list: 92 named unit/component tests plus the frozen golden integration test. Delivery follows test-first red-green-refactor at the smallest behavior boundary.
+Architecture section 11 is the authoritative behavior list. Existing focused tests remain valid. New work adds decision, promotion, API mutation, and end-to-end acceptance tests without expanding every permutation into a separate matrix. Delivery follows test-first red-green-refactor at the smallest behavior boundary.
 
 Additional integration boundaries are:
 
@@ -370,31 +398,38 @@ Additional integration boundaries are:
 - source-store atomic write and content reuse in a temporary directory;
 - concurrent byte-identical ingest serialization against Postgres;
 - FastAPI response serialization and error mapping;
+- append-only decision ordering, idempotency, stale-write rejection, and atomic promotion;
 - full pipeline equality between uninterrupted and injected-failure/retry runs;
-- web API adapters against deterministic response fixtures.
+- web API adapters against deterministic response fixtures;
+- one browser acceptance flow covering upload, process, inspect, decide, promote, reverse, and verify current canonical state.
 
 Tests use the fixed clock and no network. The golden file hash must match before any expected outcome is evaluated.
 
 ## 13. Delivery decomposition
 
-The work is too broad for one safe execution plan. It will be implemented through four sequential plans, each leaving a working testable increment:
+The foundation and derived pipeline through atomic canonical staging already exist. The replacement implementation plan will deliver one consolidated vertical slice in six reviewable tasks:
 
-1. **Foundation and durable evidence** — project tooling, domain types, migrations, repositories, content-addressed source store, ingest, parse, and their tests.
-2. **Derived pipeline and atomic staging** — normalization, pinned FX, rules, classification, duplicate/conflict behavior, load, recovery, and the golden graph.
-3. **Read API and application projections** — workspace, run, and review query services; FastAPI routes; presenter labels and timestamp contracts.
-4. **Operator web interface and final verification** — approved Geist UI, responsive/accessibility states, full component suite, and complete quality gate.
+1. **Close the existing pipeline** — independently review the atomic staging task, add the `process_run` orchestrator, prove the frozen sample end to end, and retain one representative failure/retry equality proof.
+2. **Review decisions and canonical promotion** — add decision and promotion persistence, activate/backfill current state for eligible revisions created by the existing loader, add command invariants, reversal, idempotency, and stale-write tests.
+3. **Consolidated FastAPI** — implement the seven product endpoints, read/write projections, multipart upload, and one consistent error contract.
+4. **Workspace application** — implement upload/process, attention summary, scope, failures, and recent runs.
+5. **Run and review workflows** — implement evidence inspection, filtered queue/detail, legal actions, decision history, and stale-state recovery.
+6. **End-to-end acceptance** — prove upload through canonical result, retry, duplicate submission, reversal, keyboard flow, basic accessibility, and repository quality gates.
 
-Each plan references this design and the canonical architecture. A later plan may consume only interfaces delivered and verified by earlier plans; it may not silently redefine them.
+The older read-only API and operator-web plans are superseded. The derived-pipeline plan remains historical authority for completed tasks 1–7; its unstarted golden task is replaced by task 1 above. A separate replacement implementation plan will be written only after the owner approves this amended design.
 
 ## 14. Acceptance criteria
 
 The design is implemented when:
 
-- a fresh local setup can migrate Postgres, import the pinned FX fixture, ingest the frozen CSV, process it, and serve the read API and web application;
+- a fresh local setup can migrate Postgres, import the pinned FX fixture, upload the frozen CSV, process it, and serve the local API and web application;
 - every physical source line is accounted for and every data record has one active-rules terminal classification;
 - retries after every injected boundary produce a persisted graph equal to uninterrupted processing;
 - submitting identical bytes repeatedly preserves every occurrence while reusing one current run unless explicit reprocessing is requested;
-- staging is atomic and contains only eligible clean or repaired terminal candidates;
-- the workspace, run page, and review queue match the approved visual and behavior requirements;
+- automatic promotion is atomic and contains only eligible clean or repaired terminal candidates;
+- a reviewer can approve or reject a reviewable candidate, acknowledge or reject a structurally unusable/duplicate record, and inspect the immutable decision history;
+- approval of a conflict appends a canonical revision and makes it current; reversal restores the prior current revision without deleting history;
+- stale and replayed decision requests are safe;
+- the workspace, run page, and actionable review queue match the approved MVP behavior;
 - all required unit, integration, component, accessibility, and golden tests pass without unexpected warnings;
 - no deferred capability from `TODO.md` is exposed as if implemented.

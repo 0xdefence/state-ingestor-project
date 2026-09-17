@@ -1,5 +1,7 @@
 # Derived Pipeline and Atomic Staging Implementation Plan
 
+> **Status on 17 September 2026.** Tasks 1–7 are implemented and remain the historical delivery record. Task 7 still requires the interrupted independent review. Do not execute Task 8 as written; its orchestration, golden-sample, and recovery proof are replaced by task 1 of the approved consolidated vertical slice, whose implementation plan will be written after owner review of the amended design.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Convert immutable raw evidence into typed candidates, apply pinned FX and registered cross-record rules, classify every data record, and atomically stage only eligible terminal revisions.
