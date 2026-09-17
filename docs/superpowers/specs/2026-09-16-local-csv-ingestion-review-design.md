@@ -1,8 +1,9 @@
 # Local CSV Ingestion and Review Design Specification
 
-**Status:** Pending owner approval
+**Status:** Approved for implementation
 **Date:** 16 September 2026
 **Amended:** 17 September 2026 — exact-file submission deduplication
+**Approved:** 17 September 2026
 **Implements:** [`docs/ARCHITECTURE.md`](../../../docs/ARCHITECTURE.md)
 **Fixture contract:** [`data/messy_sample_data.schema.md`](../../../data/messy_sample_data.schema.md)
 **Visual baseline:** [workspace and review layout, revision 9](../../../.superpowers/brainstorm/79491-1789562129/content/workspace-review-layout-v9.html)
