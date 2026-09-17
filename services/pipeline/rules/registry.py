@@ -3,6 +3,7 @@
 import json
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
+from functools import partial
 from hashlib import sha256
 from types import MappingProxyType
 from typing import cast
@@ -12,6 +13,7 @@ from services.pipeline.rules.base import (
     RunCandidateGraph,
     apply_effects,
 )
+from services.pipeline.rules.domains import TerminalDomainConfig, terminal_domains
 from services.pipeline.rules.invariants import refund_invariant, stock_invariant
 from services.pipeline.rules.relationships import REFERRAL_PATTERN, relationships
 from services.pipeline.rules.repairs import (
@@ -112,7 +114,9 @@ def _always(graph: RunCandidateGraph) -> bool:
     return True
 
 
-def default_registry() -> RuleRegistry:
+def default_registry(
+    *, domain_config: TerminalDomainConfig = TerminalDomainConfig()
+) -> RuleRegistry:
     return RuleRegistry(
         (
             RuleDefinition(
@@ -135,6 +139,15 @@ def default_registry() -> RuleRegistry:
                 bind_fx,
                 30,
                 (("order", "ordered_at"), ("other", "run_snapshot")),
+            ),
+            RuleDefinition(
+                "TERMINAL_FIELD_DOMAINS",
+                1,
+                False,
+                _always,
+                partial(terminal_domains, config=domain_config),
+                35,
+                domain_config.parameters,
             ),
             RuleDefinition(
                 "RELATIONSHIPS",

@@ -50,7 +50,9 @@ SNAPSHOT = FxSnapshot(
 CUSTOMER = (
     "CUSTOMER,CUST-1001,Sofia Rossi 🌟,s@example.org,100,,2024-01-01,active,vip,\n"
 )
-PRODUCT = "PRODUCT,SKU-2004,Widget,Electronics,19.99,5,2024-01-01,in_stock,sale,\n"
+PRODUCT = (
+    "PRODUCT,SKU-2004,Widget,Electronics,19.99,5,2024-01-01,in_stock,accessories,\n"
+)
 ORDER = "ORDER,ORD-3001,Sofia Rossi,SKU-2004,19.99,1,2024-01-07,shipped,,\n"
 
 
