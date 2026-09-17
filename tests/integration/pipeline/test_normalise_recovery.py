@@ -1,7 +1,7 @@
 """Durable normalization rollback, replay and complete persisted evidence equality."""
 
-import json
 from dataclasses import replace
+from datetime import timedelta
 from pathlib import Path
 from uuid import UUID
 
@@ -11,9 +11,10 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from services.application.ingest import IngestFile, ingest_file
-from services.application.ports import Repositories
+from services.application.ports import PipelineEvent, Repositories
 from services.application.process import parse_run
 from services.domain.runs import RunState
+from services.infrastructure.db.derived_codec import evidence_equal
 from services.infrastructure.db.models import (
     CandidateRevisionModel,
     DataQualityIssueModel,
@@ -43,9 +44,9 @@ def parsed_run(engine: Engine, tmp_path: Path) -> UUID:
     return result.run_id
 
 
-def stable_graph(engine: Engine, run_id: UUID) -> str:
+def stable_graph(engine: Engine, run_id: UUID) -> dict[str, object]:
     with Session(engine) as session:
-        graph = {}
+        graph: dict[str, object] = {}
         for model in (
             RawRecordModel,
             CandidateRevisionModel,
@@ -86,7 +87,37 @@ def stable_graph(engine: Engine, run_id: UUID) -> str:
             "stage_failure": run.stage_failure,
             "counts": run.counts,
         }
-        return json.dumps(graph, default=str, sort_keys=True, separators=(",", ":"))
+        return graph
+
+
+def event_history(engine: Engine, run_id: UUID) -> tuple[PipelineEvent, ...]:
+    """Read every event field, without stripping execution-history metadata."""
+    with Session(engine) as session:
+        return tuple(
+            PipelineEvent(
+                row.id,
+                row.run_id,
+                row.stage,
+                row.event_type,
+                row.facts,
+                row.occurred_at,
+            )
+            for row in session.scalars(
+                select(PipelineEventModel)
+                .where(PipelineEventModel.run_id == run_id)
+                .order_by(PipelineEventModel.id)
+            )
+        )
+
+
+def assert_retained_history(
+    previous: tuple[PipelineEvent, ...], current: tuple[PipelineEvent, ...]
+) -> None:
+    by_id = {event.id: event for event in current}
+    assert all(
+        event.id in by_id and evidence_equal(event, by_id[event.id])
+        for event in previous
+    )
 
 
 def clear_normalisation(engine: Engine, run_id: UUID) -> None:
@@ -145,10 +176,90 @@ def test_failed_batch_retry_graph_equals_uninterrupted(
         assert uow.runs.get(run_id).state is RunState.NORMALISING
         revisions = uow.candidates.for_run(run_id)
         assert len(revisions) == {1: 0, 2: 9, 6: 46}[failed_batch]
+    first_failure_history = event_history(engine, run_id)
+    with pytest.raises(RuntimeError, match="injected"):
+        normalise_run(run_id, 10, factory, context, failure_injector=fail)
+    second_failure_history = event_history(engine, run_id)
+    assert_retained_history(first_failure_history, second_failure_history)
     assert normalise_run(run_id, 10, factory, context).record_count == 52
-    assert stable_graph(engine, run_id) == expected
+    assert evidence_equal(stable_graph(engine, run_id), expected)
+    completed_history = event_history(engine, run_id)
+    assert_retained_history(second_failure_history, completed_history)
+    normalization_events = [e for e in completed_history if e.stage == "normalise"]
+    assert len({e.id for e in normalization_events}) == len(normalization_events)
+    assert all(e.id.version == 5 for e in normalization_events)
+    assert all(e.occurred_at == FixedClock().now() for e in normalization_events)
+    ordinal = (failed_batch - 1) * 10
+    lifecycle = [
+        e
+        for e in normalization_events
+        if e.event_type in ("stage_started", "stage_retried", "stage_failed")
+    ]
+    assert sorted(
+        (
+            e.facts["attempt_number"],
+            e.event_type,
+            e.facts["record_ordinal"],
+            e.facts["batch_number"],
+        )
+        for e in lifecycle
+    ) == sorted(
+        [
+            (1, "stage_started", 0, 0),
+            (1, "stage_failed", ordinal, failed_batch - 1),
+            (2, "stage_retried", ordinal, failed_batch - 1),
+            (2, "stage_failed", ordinal, failed_batch - 1),
+            (3, "stage_retried", ordinal, failed_batch - 1),
+        ]
+    )
+    for event in lifecycle:
+        keys = {"attempt_number", "record_ordinal", "batch_number"}
+        if event.event_type == "stage_failed":
+            keys |= {"error_type", "message"}
+            assert event.facts["error_type"] == "RuntimeError"
+            assert event.facts["message"] == "injected before commit"
+        assert set(event.facts) == keys
+    successful = [
+        e
+        for e in normalization_events
+        if e.event_type in ("batch_committed", "stage_completed")
+    ]
+    batches = sorted(
+        (e for e in successful if e.event_type == "batch_committed"),
+        key=lambda e: e.facts["batch_number"],
+    )
+    assert [e.facts for e in batches] == [
+        {
+            "batch_number": batch,
+            "record_ordinal": min(batch * 10, 52),
+            "record_count": 10 if batch < 6 else 2,
+            "attempt_number": 1 if batch < failed_batch else 3,
+        }
+        for batch in range(1, 7)
+    ]
+    completions = [e for e in successful if e.event_type == "stage_completed"]
+    assert len(completions) == 1
+    assert completions[0].facts == {
+        "attempt_number": 3,
+        "record_ordinal": 52,
+        "batch_number": 6,
+    }
+    assert len(normalization_events) == len(lifecycle) + len(successful) == 12
+    # Replaying successful work retains its original committing attempt/time.
+    with factory() as uow:
+        for event in successful:
+            uow.events.append(
+                replace(
+                    event,
+                    facts={**event.facts, "attempt_number": 99},
+                    occurred_at=event.occurred_at + timedelta(days=1),
+                )
+            )
+        uow.commit()
+    assert evidence_equal(event_history(engine, run_id), completed_history)
     assert normalise_run(run_id, 10, factory, context).record_count == 52
-    assert stable_graph(engine, run_id) == expected
+    assert evidence_equal(stable_graph(engine, run_id), expected)
+    assert evidence_equal(event_history(engine, run_id), completed_history)
     assert len({id(session) for session in sessions}) == len(sessions)
     with factory() as uow:
         revisions = uow.candidates.for_run(run_id)
@@ -165,8 +276,8 @@ def test_failed_batch_retry_graph_equals_uninterrupted(
                 PipelineEventModel.event_type == "stage_failed",
             )
         ).all()
-        assert len(failures) == 1 and failures[0].id.version == 5
-        assert failures[0].facts["record_ordinal"] == (failed_batch - 1) * 10
+        assert len(failures) == 2
+        assert all(e.facts["record_ordinal"] == ordinal for e in failures)
 
 
 def test_normalise_requires_parse_completion(engine: Engine, tmp_path: Path) -> None:
@@ -208,7 +319,7 @@ def test_candidate_replay_checks_complete_evidence(
             for issue in uow.candidates.issues(revision.id):
                 uow.candidates.add_issue(issue)
         uow.commit()
-    assert stable_graph(engine, run_id) == before
+    assert evidence_equal(stable_graph(engine, run_id), before)
     revision = revisions[0]
     with pytest.raises(ValueError, match="identity|immutable"):
         with uow_for(engine) as uow:
@@ -224,7 +335,7 @@ def test_candidate_replay_checks_complete_evidence(
     with pytest.raises(ValueError, match="identity"):
         with uow_for(engine) as uow:
             uow.candidates.add_issue(replace(issue, summary="changed"))
-    assert stable_graph(engine, run_id) == before
+    assert evidence_equal(stable_graph(engine, run_id), before)
 
 
 def test_replay_rejects_different_decimal_representation(
@@ -265,3 +376,96 @@ def test_replay_rejects_different_decimal_representation(
                     ),
                 )
             )
+
+
+@pytest.mark.parametrize(
+    "changed_evidence",
+    [
+        "candidate_value",
+        "candidate_source",
+        "transformation_value",
+        "transformation_sequence",
+        "issue_source",
+        "issue_code",
+    ],
+)
+def test_replay_rejects_equal_but_differently_typed_evidence(
+    engine: Engine, tmp_path: Path, changed_evidence: str
+) -> None:
+    from services.application.normalise import normalise_run
+    from services.domain.candidates import CustomerCandidate, OrderCandidate
+    from services.domain.issues import IssueCode
+    from services.pipeline.normalise.candidates import NormaliseContext
+
+    run_id = parsed_run(engine, tmp_path)
+    normalise_run(run_id, 10, lambda: uow_for(engine), NormaliseContext(FixedClock()))
+    before = stable_graph(engine, run_id)
+    with uow_for(engine) as uow:
+        revisions = uow.candidates.for_run(run_id)
+        customer = revisions[0]
+        assert isinstance(customer.payload, CustomerCandidate)
+        order = next(
+            r
+            for r in revisions
+            if isinstance(r.payload, OrderCandidate) and r.payload.quantity.value == 1
+        )
+        assert isinstance(order.payload, OrderCandidate)
+        events = uow.candidates.transformations(order.id)
+        integer = next(
+            t for t in events if type(t.after.value) is int and t.after.value == 1
+        )
+        first_event = events[0]
+        issue = next(
+            i
+            for r in revisions
+            for i in uow.candidates.issues(r.id)
+            if i.code is IssueCode.INVALID_STRUCTURE
+        )
+    with pytest.raises(ValueError, match="identity"):
+        with uow_for(engine) as uow:
+            if changed_evidence == "candidate_value":
+                uow.candidates.add(
+                    replace(
+                        order,
+                        payload=replace(
+                            order.payload,
+                            quantity=replace(order.payload.quantity, value=True),
+                        ),
+                    )
+                )
+            elif changed_evidence == "candidate_source":
+                identity = customer.payload.customer_id
+                ref = identity.source_refs[0]
+                assert ref.field_index == 1
+                uow.candidates.add(
+                    replace(
+                        customer,
+                        payload=replace(
+                            customer.payload,
+                            customer_id=replace(
+                                identity, source_refs=(replace(ref, field_index=True),)
+                            ),
+                        ),
+                    )
+                )
+            elif changed_evidence == "transformation_value":
+                uow.candidates.add_transformation(
+                    replace(integer, after=replace(integer.after, value=True))
+                )
+            elif changed_evidence == "transformation_sequence":
+                assert first_event.sequence == 1
+                uow.candidates.add_transformation(replace(first_event, sequence=True))
+            elif changed_evidence == "issue_source":
+                assert issue.source_refs[0].field_index == 0
+                uow.candidates.add_issue(
+                    replace(
+                        issue,
+                        source_refs=(
+                            replace(issue.source_refs[0], field_index=False),
+                            *issue.source_refs[1:],
+                        ),
+                    )
+                )
+            else:
+                uow.candidates.add_issue(replace(issue, code=str(issue.code)))
+    assert evidence_equal(stable_graph(engine, run_id), before)

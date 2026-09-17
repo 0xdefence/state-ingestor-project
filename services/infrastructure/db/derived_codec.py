@@ -4,11 +4,11 @@ No binary float, datetime-to-date coercion, unordered provenance, or dynamic cla
 imports are permitted. The tags are a storage format, not a domain dictionary API.
 """
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import fields, is_dataclass
 from datetime import date, datetime
 from decimal import Decimal
-from enum import StrEnum
+from enum import Enum, StrEnum
 from typing import cast
 from uuid import UUID
 
@@ -141,3 +141,46 @@ def read_as[T](value: object, expected: type[T]) -> T:
 
 def read_tuple[T](value: list[object], expected: type[T]) -> tuple[T, ...]:
     return tuple(read_as(item, expected) for item in value)
+
+
+def evidence_equal(left: object, right: object) -> bool:
+    """Compare complete evidence without Python's bool/int or enum/str coercion.
+
+    Mapping key order is immaterial; sequence order, concrete container/value
+    types, Decimal scale/sign, and timestamp representation remain evidence.
+    Unsupported objects fail closed instead of acquiring accidental equality.
+    """
+    if type(left) is not type(right):
+        return False
+    if isinstance(left, Decimal):
+        return left.as_tuple() == cast(Decimal, right).as_tuple()
+    if isinstance(left, datetime):
+        other = cast(datetime, right)
+        return left.isoformat() == other.isoformat() and left.fold == other.fold
+    if isinstance(left, date):
+        return left.isoformat() == cast(date, right).isoformat()
+    if is_dataclass(left) and not isinstance(left, type):
+        return all(
+            evidence_equal(getattr(left, item.name), getattr(right, item.name))
+            for item in fields(left)
+        )
+    if isinstance(left, Mapping):
+        left_mapping = cast(Mapping[object, object], left)
+        right_mapping = cast(Mapping[object, object], right)
+        return len(left_mapping) == len(right_mapping) and all(
+            any(
+                evidence_equal(key, other_key) and evidence_equal(value, other_value)
+                for other_key, other_value in right_mapping.items()
+            )
+            for key, value in left_mapping.items()
+        )
+    if isinstance(left, (tuple, list)):
+        left_items = cast(tuple[object, ...] | list[object], left)
+        right_items = cast(tuple[object, ...] | list[object], right)
+        return len(left_items) == len(right_items) and all(
+            evidence_equal(item, other)
+            for item, other in zip(left_items, right_items, strict=True)
+        )
+    if left is None or isinstance(left, (str, int, bool, Enum, UUID)):
+        return left == right
+    raise ValueError(f"unsupported evidence comparison: {type(left).__name__}")

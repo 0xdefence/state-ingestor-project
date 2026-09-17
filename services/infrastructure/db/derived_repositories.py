@@ -36,6 +36,7 @@ from services.domain.issues import (
 from services.infrastructure.db.derived_codec import (
     array_json,
     decode,
+    evidence_equal,
     object_json,
     read_as,
     read_tuple,
@@ -149,8 +150,8 @@ class SqlAlchemyCandidateRepository:
     def add(self, revision: CandidateRevision) -> None:
         existing = self._session.get(CandidateRevisionModel, revision.id)
         if existing is not None:
-            if _candidate(existing) != revision or existing.payload != object_json(
-                revision.payload
+            if not evidence_equal(_candidate(existing), revision) or not evidence_equal(
+                existing.payload, object_json(revision.payload)
             ):
                 raise ValueError("candidate revisions are immutable: identity mismatch")
             return
@@ -203,9 +204,9 @@ class SqlAlchemyCandidateRepository:
         existing = self._session.get(TransformationEventModel, event.id)
         if existing is not None:
             if (
-                _transformation(existing) != event
-                or existing.before != object_json(event.before)
-                or existing.after != object_json(event.after)
+                not evidence_equal(_transformation(existing), event)
+                or not evidence_equal(existing.before, object_json(event.before))
+                or not evidence_equal(existing.after, object_json(event.after))
             ):
                 raise ValueError("Transformation identity mismatch")
             return
@@ -235,7 +236,9 @@ class SqlAlchemyCandidateRepository:
     def add_issue(self, issue: DataQualityIssue) -> None:
         existing = self._session.get(DataQualityIssueModel, issue.id)
         if existing is not None:
-            if _issue(existing) != issue:
+            if not evidence_equal(_issue(existing), issue) or not evidence_equal(
+                existing.source_refs, array_json(issue.source_refs)
+            ):
                 raise ValueError("Issue identity mismatch")
             return
         self._session.add(
