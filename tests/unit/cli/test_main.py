@@ -2,22 +2,27 @@
 
 from collections.abc import Iterator
 from contextlib import contextmanager
+from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 from uuid import UUID
 
 import pytest
 from typer import Typer
 from typer.testing import CliRunner
 
-from services.application.process import parse_run
+from services.application.load import LoadResult
+from services.application.process import StageResult, parse_run
 from services.cli.main import create_app
 from services.domain.runs import RunState
 from services.infrastructure.runtime import Runtime, Settings
 from services.infrastructure.source_store import FilesystemSourceStore
+from tests.unit.ingest.test_ingest import MemoryRuns
 from tests.unit.pipeline.test_parse import (
     RECOVERY_BYTES,
     FixedClock,
     ParseMemoryDatabase,
+    ParseMemoryUow,
     fail_second_batch,
 )
 
@@ -26,8 +31,54 @@ CliFixture = tuple[Typer, ParseMemoryDatabase, Runtime, Path]
 
 
 @pytest.fixture
-def cli(tmp_path: Path) -> tuple[Typer, ParseMemoryDatabase, Runtime, Path]:
+def cli(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> tuple[Typer, ParseMemoryDatabase, Runtime, Path]:
     database = ParseMemoryDatabase()
+    snapshot_id = UUID(int=99)
+
+    def pin_fx_snapshot(self, run_id, pinned):
+        self.rows[run_id] = replace(self.rows[run_id], fx_snapshot_id=pinned)
+
+    monkeypatch.setattr(MemoryRuns, "pin_fx_snapshot", pin_fx_snapshot, raising=False)
+    monkeypatch.setattr(
+        MemoryRuns, "promoted_count", lambda _self, _run_id: 3, raising=False
+    )
+    monkeypatch.setattr(
+        ParseMemoryUow,
+        "fx",
+        SimpleNamespace(latest=lambda: SimpleNamespace(id=snapshot_id)),
+        raising=False,
+    )
+
+    def normalise(run_id, _batch_size, uow_factory, _context):
+        with uow_factory() as work:
+            count = len(work.raw_records.rows)
+            work.runs.set_state(run_id, RunState.NORMALISED)
+            work.commit()
+        return StageResult(run_id, count)
+
+    def classify(run_id, _registry, work, _clock):
+        counts = {"CLEAN": 3, "NEEDS_REVIEW": 2}
+        with work:
+            work.runs.rows[run_id] = replace(
+                work.runs.rows[run_id],
+                state=RunState.CLASSIFIED,
+                counts=counts,
+                rules_version="test-rules",
+            )
+            work.commit()
+        return SimpleNamespace(counts=counts)
+
+    def load(run_id, uow_factory, _clock):
+        with uow_factory() as work:
+            work.runs.set_state(run_id, RunState.STAGED)
+            work.commit()
+        return LoadResult(run_id, 3)
+
+    monkeypatch.setattr("services.application.process.normalise_run", normalise)
+    monkeypatch.setattr("services.application.process.classify_run", classify)
+    monkeypatch.setattr("services.application.process.stage_run", load)
     runtime = Runtime(
         database.factory, FilesystemSourceStore(tmp_path / "store"), FixedClock()
     )
@@ -96,7 +147,7 @@ def test_idempotency_replay_retains_occurrence_and_run(cli: CliFixture) -> None:
 
 
 @pytest.mark.parametrize("command", ["process", "retry", "ingest"])
-def test_processing_resumes_durable_parse_only(cli: CliFixture, command: str) -> None:
+def test_processing_resumes_durable_pipeline(cli: CliFixture, command: str) -> None:
     app, database, runtime, source = cli
     assert RUNNER.invoke(app, ["ingest", str(source)]).exit_code == 0
     run_id = next(iter(database.runs.rows))
@@ -118,9 +169,9 @@ def test_processing_resumes_durable_parse_only(cli: CliFixture, command: str) ->
     result = RUNNER.invoke(app, [*args, "--batch-size", "2"])
     assert result.exit_code == 0, result.output
     assert f"Run: {run_id}" in result.stdout
-    assert "later stages" in result.stdout.lower()
-    assert database.runs.get(run_id).state == RunState.PARSED
-    assert database.runs.get(run_id).counts is None
+    assert "later stages" not in result.stdout.lower()
+    assert database.runs.get(run_id).state == RunState.STAGED
+    assert database.runs.get(run_id).counts == {"CLEAN": 3, "NEEDS_REVIEW": 2}
     assert prior_ids <= set(database.raw_records.rows)
     assert len(database.raw_records.rows) == 5
     assert [
@@ -132,7 +183,10 @@ def test_processing_resumes_durable_parse_only(cli: CliFixture, command: str) ->
         assert "Resume checkpoint: parse, record 2" in result.stdout
     else:
         assert "Raw records: 5" in result.stdout
-        assert "State: parsed" in result.stdout
+        assert "State: Processed" in result.stdout
+        assert "Candidates normalised: 5" in result.stdout
+        assert "Outcomes: {'CLEAN': 3, 'NEEDS_REVIEW': 2}" in result.stdout
+        assert "Canonical revisions promoted: 3" in result.stdout
 
 
 def test_ingest_process_dispatches_new_run(cli: CliFixture) -> None:
@@ -140,7 +194,7 @@ def test_ingest_process_dispatches_new_run(cli: CliFixture) -> None:
     result = RUNNER.invoke(app, ["ingest", str(source), "--process"])
     assert result.exit_code == 0, result.output
     assert len(database.raw_records.rows) == 5
-    assert next(iter(database.runs.rows.values())).state == RunState.PARSED
+    assert next(iter(database.runs.rows.values())).state == RunState.STAGED
 
 
 def test_reprocess_creates_successor_without_parsing(cli: CliFixture) -> None:
@@ -251,7 +305,7 @@ def test_parse_failure_is_operator_error_and_retains_ingest(cli: CliFixture) -> 
     assert next(iter(database.runs.rows.values())).stage_failure == "parse_failed"
 
 
-def test_unknown_run_and_unsupported_retry_are_useful_errors(cli: CliFixture) -> None:
+def test_unknown_run_and_later_stage_retry_are_useful(cli: CliFixture) -> None:
     app, database, _, source = cli
     missing = RUNNER.invoke(app, ["process", str(UUID(int=123))])
     assert missing.exit_code != 0
@@ -261,9 +315,9 @@ def test_unknown_run_and_unsupported_retry_are_useful_errors(cli: CliFixture) ->
     database.runs.set_state(
         run_id, RunState.NORMALISING, stage_failure="normalise_failed"
     )
-    unsupported = RUNNER.invoke(app, ["retry", str(run_id)])
-    assert unsupported.exit_code != 0
-    assert "Only parse-stage recovery is implemented" in unsupported.output
+    resumed = RUNNER.invoke(app, ["retry", str(run_id)])
+    assert resumed.exit_code == 0, resumed.output
+    assert "State: Processed" in resumed.output
 
 
 def test_reprocess_does_not_offer_process_flag(cli: CliFixture) -> None:

@@ -32,6 +32,7 @@ from services.infrastructure.db.repositories import (
     SqlAlchemySourceRepository,
 )
 from services.infrastructure.db.uow import SqlAlchemyUnitOfWork
+from services.infrastructure.fx_importer import import_fx_snapshot
 from services.infrastructure.source_store import FilesystemSourceStore
 
 DEFAULT_DATABASE_URL = "postgresql+psycopg://alexis:alexis@localhost:55432/alexis"
@@ -116,6 +117,13 @@ def build_runtime(
 
         def uow_factory() -> SqlAlchemyUnitOfWork:
             return SqlAlchemyUnitOfWork(sessions, _repositories)
+
+        root = Path(__file__).resolve().parents[2]
+        import_fx_snapshot(
+            root / "data/fx/ecb-history.csv",
+            root / "data/fx/manifest.json",
+            uow_factory,
+        )
 
         yield Runtime(
             uow_factory,

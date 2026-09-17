@@ -12,14 +12,14 @@ from dataclasses import replace
 from datetime import UTC, datetime
 from io import BytesIO
 from pathlib import Path
-from types import TracebackType
+from types import SimpleNamespace, TracebackType
 from typing import Self, cast
 from uuid import UUID
 
 import pytest
 
 from services.application.ingest import IngestFile, ingest_file
-from services.application.ports import PipelineEvent, Stage
+from services.application.ports import PipelineCheckpoint, PipelineEvent, Stage
 from services.domain.raw import RawRecord, RawRecordKind
 from services.domain.runs import RunState
 from services.infrastructure.source_store import FilesystemSourceStore
@@ -367,6 +367,72 @@ class ParseMemoryDatabase:
         return uow
 
 
+def install_pipeline_stubs(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Let parse-focused command tests cross later stages without duplicating them."""
+    from services.application.load import LoadResult
+    from services.application.process import StageResult
+
+    snapshot_id = UUID(int=99)
+
+    def pin_fx_snapshot(self, run_id, pinned):
+        self.rows[run_id] = replace(self.rows[run_id], fx_snapshot_id=pinned)
+
+    monkeypatch.setattr(MemoryRuns, "pin_fx_snapshot", pin_fx_snapshot, raising=False)
+    monkeypatch.setattr(
+        MemoryRuns, "promoted_count", lambda _self, _run_id: 3, raising=False
+    )
+    monkeypatch.setattr(
+        ParseMemoryUow,
+        "fx",
+        SimpleNamespace(latest=lambda: SimpleNamespace(id=snapshot_id)),
+        raising=False,
+    )
+
+    def normalise(run_id, batch_size, uow_factory, context):
+        with uow_factory() as work:
+            records = tuple(work.raw_records.rows.values())
+            work.checkpoints.advance(
+                PipelineCheckpoint(
+                    run_id,
+                    "normalise",
+                    (len(records) + batch_size - 1) // batch_size,
+                    len(records),
+                    records[-1].id,
+                    context.clock.now(),
+                )
+            )
+            work.runs.set_state(run_id, RunState.NORMALISED)
+            work.commit()
+        return StageResult(run_id, len(records))
+
+    def classify(run_id, _registry, work, _clock):
+        counts = {"CLEAN": 3, "NEEDS_REVIEW": 2}
+        with work:
+            work.runs.rows[run_id] = replace(
+                work.runs.rows[run_id],
+                state=RunState.CLASSIFIED,
+                counts=counts,
+                rules_version="test-rules",
+            )
+            work.commit()
+        return SimpleNamespace(counts=counts)
+
+    def load(run_id, uow_factory, _clock):
+        with uow_factory() as work:
+            work.runs.set_state(run_id, RunState.STAGED)
+            work.commit()
+        return LoadResult(run_id, 3)
+
+    monkeypatch.setattr("services.application.process.normalise_run", normalise)
+    monkeypatch.setattr("services.application.process.classify_run", classify)
+    monkeypatch.setattr("services.application.process.stage_run", load)
+
+
+@pytest.fixture
+def pipeline_stubs(monkeypatch: pytest.MonkeyPatch) -> None:
+    install_pipeline_stubs(monkeypatch)
+
+
 RECOVERY_BYTES = (HEADER + '\nORDER,1,"a\nb"\n\n' + HEADER + "\nORDER,2,\n").encode()
 
 
@@ -423,7 +489,9 @@ def test_failed_batch_rolls_back_only_that_batch(tmp_path: Path) -> None:
     )
 
 
-def test_retry_from_checkpoint_is_idempotent(tmp_path: Path) -> None:
+def test_retry_from_checkpoint_is_idempotent(
+    tmp_path: Path, pipeline_stubs: None
+) -> None:
     from services.application.process import (
         ProcessRun,
         RetryRun,
@@ -458,7 +526,7 @@ def test_retry_from_checkpoint_is_idempotent(tmp_path: Path) -> None:
     )
     assert result == baseline
     assert database.raw_records.rows == uninterrupted.raw_records.rows
-    assert result.state == RunState.PARSED
+    assert result.state == RunState.STAGED
     assert result.parse.record_count == 5
     assert database.runs.get(run_id).stage_failure is None
     checkpoint = database.checkpoints.get(run_id, "parse")
@@ -511,7 +579,7 @@ def test_parse_invalid_batch_size_does_not_start_run(tmp_path: Path) -> None:
 
 
 def test_completion_commit_failure_retries_without_rewriting_batches(
-    tmp_path: Path,
+    tmp_path: Path, pipeline_stubs: None
 ) -> None:
     from services.application.process import RetryRun, parse_run, retry_run
 
@@ -535,7 +603,7 @@ def test_completion_commit_failure_retries_without_rewriting_batches(
     result = retry_run(
         RetryRun(run_id, batch_size=2), database.factory, store, FixedClock()
     )
-    assert result.state == RunState.PARSED
+    assert result.state == RunState.STAGED
     assert [
         e for e in database.events.rows if e.event_type == "batch_committed"
     ] == batches
@@ -572,7 +640,7 @@ def test_invalid_utf8_records_failure_without_completion(tmp_path: Path) -> None
 
 @pytest.mark.parametrize("failure", ["batch", "completion"])
 def test_event_ids_are_stable_uuid5_through_recovery(
-    tmp_path: Path, failure: str
+    tmp_path: Path, failure: str, pipeline_stubs: None
 ) -> None:
     from services.application.process import RetryRun, parse_run, retry_run
 
@@ -631,7 +699,7 @@ def test_event_ids_are_stable_uuid5_through_recovery(
 
 
 def test_event_attempts_distinguish_repeated_failures_at_same_checkpoint(
-    tmp_path: Path,
+    tmp_path: Path, pipeline_stubs: None
 ) -> None:
     from services.application.process import RetryRun, parse_run, retry_run
 

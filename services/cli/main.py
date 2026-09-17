@@ -16,6 +16,7 @@ from services.application.process import ingest_and_process as run_ingest
 from services.application.process import process_run as run_process
 from services.application.process import retry_run as run_retry
 from services.cli.contracts import IngestInput, ProcessingInput, ReprocessInput
+from services.domain.runs import RunState
 from services.infrastructure.runtime import (
     DEFAULT_DATABASE_URL,
     Runtime,
@@ -81,9 +82,12 @@ def show_ingest(result: IngestResult, *, reprocess: bool = False) -> None:
 
 def show_run(result: RunResult) -> None:
     typer.echo(f"Run: {result.run_id}")
-    typer.echo(f"State: {result.state.value}")
+    state = "Processed" if result.state is RunState.STAGED else result.state.value
+    typer.echo(f"State: {state}")
     typer.echo(f"Raw records: {result.parse.record_count}")
-    typer.echo("This command supports parse only; later stages are not implemented.")
+    typer.echo(f"Candidates normalised: {result.normalise.record_count}")
+    typer.echo(f"Outcomes: {result.classification_counts}")
+    typer.echo(f"Canonical revisions promoted: {result.promoted_count}")
 
 
 def create_app(runtime_factory: RuntimeFactory = build_runtime) -> typer.Typer:
@@ -97,7 +101,7 @@ def create_app(runtime_factory: RuntimeFactory = build_runtime) -> typer.Typer:
         ] = DEFAULT_DATABASE_URL,
         source_root: Annotated[str, typer.Option(envvar="SOURCE_ROOT")] = "var/sources",
     ) -> None:
-        """Freeze CSV sources and manage runs. Processing covers parse only."""
+        """Freeze CSV sources and manage complete processing runs."""
         with operator_errors():
             ctx.obj = Settings.model_validate(
                 {"database_url": database_url, "source_root": source_root}
@@ -110,7 +114,7 @@ def create_app(runtime_factory: RuntimeFactory = build_runtime) -> typer.Typer:
         actor_label: Annotated[str, typer.Option()] = "operator",
         idempotency_key: Annotated[str | None, typer.Option()] = None,
         process: Annotated[
-            bool, typer.Option("--process", help="Request parse processing.")
+            bool, typer.Option("--process", help="Request complete processing.")
         ] = False,
         batch_size: BatchSize = 1000,
     ) -> None:
@@ -123,6 +127,7 @@ def create_app(runtime_factory: RuntimeFactory = build_runtime) -> typer.Typer:
                 process=process,
                 batch_size=batch_size,
             )
+            processed: RunResult | None = None
             with runtime_factory(cast(Settings, ctx.obj)) as runtime:
                 with boundary.source.open("rb") as content:
                     result = run_ingest(
@@ -139,12 +144,16 @@ def create_app(runtime_factory: RuntimeFactory = build_runtime) -> typer.Typer:
                         process=boundary.process,
                         batch_size=boundary.batch_size,
                     )
+                if boundary.process:
+                    processed = run_process(
+                        ProcessRun(result.run_id, boundary.batch_size),
+                        runtime.uow_factory,
+                        runtime.source_store,
+                        runtime.clock,
+                    )
             show_ingest(result)
-            if boundary.process:
-                typer.echo(
-                    "Processing requested; completed work is reused. "
-                    "Only parse is supported; later stages are not implemented."
-                )
+            if processed is not None:
+                show_run(processed)
             else:
                 typer.echo("No processing requested.")
 
@@ -166,7 +175,7 @@ def create_app(runtime_factory: RuntimeFactory = build_runtime) -> typer.Typer:
 
     @cli.command()
     def retry(ctx: typer.Context, run_id: str, batch_size: BatchSize = 1000) -> None:
-        """Resume a run from its durable parse checkpoint."""
+        """Resume a run from its durable pipeline boundary."""
         with operator_errors():
             boundary = ProcessingInput.model_validate(
                 {"run_id": run_id, "batch_size": batch_size}

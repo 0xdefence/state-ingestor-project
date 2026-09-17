@@ -32,6 +32,8 @@ from services.infrastructure.db.derived_repositories import (
     SqlAlchemyReviewRepository as SqlAlchemyReviewRepository,
 )
 from services.infrastructure.db.models import (
+    CandidateRevisionModel,
+    CanonicalRevisionModel,
     PipelineCheckpointModel,
     PipelineEventModel,
     RawRecordModel,
@@ -215,6 +217,31 @@ class SqlAlchemyRunRepository:
         row.counts = dict(counts)
         row.state = RunState.CLASSIFIED
         row.stage_failure = None
+
+    def pin_fx_snapshot(self, run_id: UUID, snapshot_id: UUID) -> None:
+        row = self._session.scalar(
+            select(RunModel).where(RunModel.id == run_id).with_for_update()
+        )
+        if row is None:
+            raise LookupError(f"Unknown run: {run_id}")
+        if row.fx_snapshot_id is not None and row.fx_snapshot_id != snapshot_id:
+            raise ValueError("Run FX snapshot is already pinned")
+        row.fx_snapshot_id = snapshot_id
+
+    def promoted_count(self, run_id: UUID) -> int:
+        return self._session.scalar(
+            select(func.count(CanonicalRevisionModel.id))
+            .join(
+                CandidateRevisionModel,
+                CandidateRevisionModel.id
+                == CanonicalRevisionModel.candidate_revision_id,
+            )
+            .join(
+                RawRecordModel,
+                RawRecordModel.id == CandidateRevisionModel.raw_record_id,
+            )
+            .where(RawRecordModel.run_id == run_id)
+        ) or 0
 
     def set_state(
         self, run_id: UUID, state: RunState, *, stage_failure: str | None = None

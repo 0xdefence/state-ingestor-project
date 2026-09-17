@@ -59,12 +59,18 @@ def test_cli_persists_ingest_process_retry_and_reprocess(
                 app, [action, str(run_id), "--batch-size", "1"], env=env
             )
             assert result.exit_code == 0, result.output
-            assert "State: parsed" in result.stdout
+            assert "State: Processed" in result.stdout
             assert "Raw records: 2" in result.stdout
+            assert "Candidates normalised: 2" in result.stdout
+            assert "Canonical revisions promoted: 0" in result.stdout
         with Session(engine) as session:
             assert len(session.scalars(select(RawRecordModel)).all()) == 2
-            checkpoint = session.scalars(select(PipelineCheckpointModel)).one()
-            assert (checkpoint.batch_number, checkpoint.record_ordinal) == (2, 2)
+            checkpoints = session.scalars(select(PipelineCheckpointModel)).all()
+            assert {
+                (checkpoint.stage, checkpoint.batch_number, checkpoint.record_ordinal)
+                for checkpoint in checkpoints
+            } == {("parse", 2, 2), ("normalise", 2, 2)}
+            assert session.get(RunModel, run_id).state is RunState.STAGED
         result = runner.invoke(
             app,
             ["reprocess", str(source_id), "--occurrence-id", str(occurrence_id)],

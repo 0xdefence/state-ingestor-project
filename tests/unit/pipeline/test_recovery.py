@@ -8,7 +8,9 @@ from uuid import uuid4
 import pytest
 
 from services.application.ports import Run
+from services.application.process import ProcessRun, RetryRun, StageResult
 from services.domain.runs import RunState
+from services.pipeline.classify import ClassificationSummary
 from tests.unit.classify.test_rules import (
     CUSTOMER,
     NOW,
@@ -17,6 +19,205 @@ from tests.unit.classify.test_rules import (
     FixedClock,
     assess,
 )
+
+
+class OrchestrationStore:
+    def __init__(
+        self,
+        state: RunState = RunState.INGESTED,
+        *,
+        stage_failure: str | None = None,
+    ) -> None:
+        self.run_id = uuid4()
+        self.snapshot_id = uuid4()
+        self.run = Run(
+            self.run_id,
+            uuid4(),
+            None,
+            0,
+            state,
+            NOW,
+            stage_failure=stage_failure,
+            counts={"CLEAN": 31, "NEEDS_REVIEW": 17}
+            if state in (RunState.CLASSIFIED, RunState.LOADING, RunState.STAGED)
+            else None,
+        )
+        self.commits = 0
+
+    def advance(self, state: RunState, *, counts: dict[str, int] | None = None) -> None:
+        self.run = replace(
+            self.run,
+            state=state,
+            stage_failure=None,
+            counts=counts if counts is not None else self.run.counts,
+        )
+
+    def uow(self):
+        owner = self
+
+        class Work:
+            def __enter__(self):
+                self.runs = SimpleNamespace(
+                    get=lambda _: owner.run,
+                    pin_fx_snapshot=self.pin_fx_snapshot,
+                    promoted_count=lambda _: 31,
+                )
+                self.fx = SimpleNamespace(
+                    latest=lambda: SimpleNamespace(id=owner.snapshot_id)
+                )
+                self.checkpoints = SimpleNamespace(
+                    get=lambda _run_id, _stage: SimpleNamespace(record_ordinal=52)
+                )
+                return self
+
+            def pin_fx_snapshot(self, _, snapshot_id):
+                owner.run = replace(owner.run, fx_snapshot_id=snapshot_id)
+
+            def commit(self):
+                owner.commits += 1
+
+            def __exit__(self, *_):
+                pass
+
+        return Work()
+
+
+def _classification(store: OrchestrationStore) -> ClassificationSummary:
+    return SimpleNamespace(counts={"CLEAN": 31, "NEEDS_REVIEW": 17})
+
+
+def test_process_dispatches_each_stage_until_staged(monkeypatch) -> None:
+    from services.application import process
+
+    store = OrchestrationStore()
+    calls: list[str] = []
+
+    def parse(*_args, **_kwargs):
+        calls.append("parse")
+        store.advance(RunState.PARSED)
+        return StageResult(store.run_id, 52)
+
+    def normalise(*_args, **_kwargs):
+        calls.append("normalise")
+        store.advance(RunState.NORMALISED)
+        return StageResult(store.run_id, 52)
+
+    def classify(*_args, **_kwargs):
+        calls.append("classify")
+        store.advance(
+            RunState.CLASSIFIED, counts={"CLEAN": 31, "NEEDS_REVIEW": 17}
+        )
+        return _classification(store)
+
+    def load(*_args, **_kwargs):
+        calls.append("load")
+        store.advance(RunState.STAGED)
+        return SimpleNamespace(run_id=store.run_id, staged_count=31)
+
+    monkeypatch.setattr(process, "parse_run", parse)
+    monkeypatch.setattr(process, "normalise_run", normalise)
+    monkeypatch.setattr(process, "classify_run", classify)
+    monkeypatch.setattr(process, "stage_run", load)
+
+    result = process.process_run(
+        ProcessRun(store.run_id, 10), store.uow, SimpleNamespace(), FixedClock()
+    )
+
+    assert calls == ["parse", "normalise", "classify", "load"]
+    assert store.run.fx_snapshot_id == store.snapshot_id
+    assert store.commits == 1
+    assert result.parse.record_count == result.normalise.record_count == 52
+    assert result.classification_counts == {"CLEAN": 31, "NEEDS_REVIEW": 17}
+    assert (result.state, result.promoted_count) == (RunState.STAGED, 31)
+
+
+def test_staged_run_is_a_no_write_replay(monkeypatch) -> None:
+    from services.application import process
+
+    store = OrchestrationStore(RunState.STAGED)
+    store.run = replace(store.run, fx_snapshot_id=store.snapshot_id)
+    for name in ("parse_run", "normalise_run", "classify_run", "stage_run"):
+        monkeypatch.setattr(
+            process,
+            name,
+            lambda *_args, stage=name, **_kwargs: pytest.fail(
+                f"staged replay dispatched {stage}"
+            ),
+        )
+
+    result = process.process_run(
+        ProcessRun(store.run_id), store.uow, SimpleNamespace(), FixedClock()
+    )
+
+    assert store.commits == 0
+    assert result.state is RunState.STAGED
+    assert result.parse.record_count == result.normalise.record_count == 52
+    assert result.classification_counts == {"CLEAN": 31, "NEEDS_REVIEW": 17}
+    assert result.promoted_count == 31
+
+
+@pytest.mark.parametrize(
+    ("state", "failure", "expected"),
+    [
+        (RunState.PARSING, "parse_failed", ["parse", "normalise", "classify", "load"]),
+        (RunState.NORMALISING, "normalise_failed", ["normalise", "classify", "load"]),
+        (RunState.CLASSIFYING, "classify_failed", ["classify", "load"]),
+        (RunState.LOADING, "load_failed", ["load"]),
+    ],
+)
+def test_retry_resumes_from_persisted_stage(
+    monkeypatch, state: RunState, failure: str, expected: list[str]
+) -> None:
+    from services.application import process
+
+    store = OrchestrationStore(state, stage_failure=failure)
+    calls: list[str] = []
+
+    def stage(name: str, next_state: RunState, result: object):
+        def call(*_args, **_kwargs):
+            calls.append(name)
+            counts = (
+                {"CLEAN": 31, "NEEDS_REVIEW": 17}
+                if next_state is RunState.CLASSIFIED
+                else None
+            )
+            store.advance(next_state, counts=counts)
+            return result
+
+        return call
+
+    monkeypatch.setattr(
+        process,
+        "parse_run",
+        stage("parse", RunState.PARSED, StageResult(store.run_id, 52)),
+    )
+    monkeypatch.setattr(
+        process,
+        "normalise_run",
+        stage("normalise", RunState.NORMALISED, StageResult(store.run_id, 52)),
+    )
+    monkeypatch.setattr(
+        process,
+        "classify_run",
+        stage("classify", RunState.CLASSIFIED, _classification(store)),
+    )
+    monkeypatch.setattr(
+        process,
+        "stage_run",
+        stage(
+            "load",
+            RunState.STAGED,
+            SimpleNamespace(run_id=store.run_id, staged_count=31),
+        ),
+    )
+
+    result = process.retry_run(
+        RetryRun(store.run_id, 10), store.uow, SimpleNamespace(), FixedClock()
+    )
+
+    assert calls == expected
+    assert result.state is RunState.STAGED
+    assert result.promoted_count == 31
 
 
 class MemoryLoad:

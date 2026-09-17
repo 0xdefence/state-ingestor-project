@@ -387,16 +387,23 @@ def test_ingest_does_not_interpret_csv(tmp_path: Path, payload: bytes) -> None:
         assert source.read() == payload
 
 
-def test_processing_new_run_and_completed_duplicate(tmp_path: Path) -> None:
+def test_processing_new_run_and_completed_duplicate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from services.application.process import ingest_and_process
-    from tests.unit.pipeline.test_parse import FixedClock, ParseMemoryDatabase
+    from tests.unit.pipeline.test_parse import (
+        FixedClock,
+        ParseMemoryDatabase,
+        install_pipeline_stubs,
+    )
 
+    install_pipeline_stubs(monkeypatch)
     database = ParseMemoryDatabase()
     store = FilesystemSourceStore(tmp_path)
     first = ingest_and_process(
         command(), database.factory, store, FixedClock(), process=True, batch_size=1
     )
-    assert database.runs.get(first.run_id).state == RunState.PARSED
+    assert database.runs.get(first.run_id).state == RunState.STAGED
     assert len(database.raw_records.rows) == 2
     database.runs.set_state(first.run_id, RunState.STAGED)
     events = list(database.events.rows)
@@ -409,16 +416,18 @@ def test_processing_new_run_and_completed_duplicate(tmp_path: Path) -> None:
 
 
 def test_duplicate_incomplete_run_resumes_when_processing_requested(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from services.application.process import ingest_and_process, parse_run
     from tests.unit.pipeline.test_parse import (
         RECOVERY_BYTES,
         FixedClock,
         fail_second_batch,
+        install_pipeline_stubs,
         prepared_run,
     )
 
+    install_pipeline_stubs(monkeypatch)
     database, store, run_id = prepared_run(tmp_path)
     with pytest.raises(RuntimeError):
         parse_run(
@@ -437,7 +446,7 @@ def test_duplicate_incomplete_run_resumes_when_processing_requested(
     assert result.resume_from_checkpoint.record_ordinal == 2
     assert len(database.runs.rows) == 1
     assert len(database.raw_records.rows) == 5
-    assert database.runs.get(run_id).state == RunState.PARSED
+    assert database.runs.get(run_id).state == RunState.STAGED
     assert [e.event_type for e in database.events.rows].count("stage_retried") == 1
     assert [
         e.facts["record_ordinal"]

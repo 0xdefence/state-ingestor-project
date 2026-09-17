@@ -41,6 +41,16 @@ class SqlAlchemyFxRepository:
             tuple(_rate(rate) for rate in rates),
         )
 
+    def latest(self) -> FxSnapshot:
+        snapshot_id = self._session.scalar(
+            select(FxSnapshotModel.id)
+            .order_by(FxSnapshotModel.effective_at.desc(), FxSnapshotModel.id.desc())
+            .limit(1)
+        )
+        if snapshot_id is None:
+            raise LookupError("FX snapshot not found")
+        return self.get(snapshot_id)
+
     def add(self, snapshot: FxSnapshot) -> None:
         # Rate identity is (snapshot, publication, currency), not input position.
         # Compare complete evidence in the same canonical order used by get().
