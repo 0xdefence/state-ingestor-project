@@ -2,6 +2,7 @@
 
 **Status:** Pending owner approval
 **Date:** 16 September 2026
+**Amended:** 17 September 2026 — exact-file submission deduplication
 **Implements:** [`docs/ARCHITECTURE.md`](../../../docs/ARCHITECTURE.md)
 **Fixture contract:** [`data/messy_sample_data.schema.md`](../../../data/messy_sample_data.schema.md)
 **Visual baseline:** [workspace and review layout, revision 9](../../../.superpowers/brainstorm/79491-1789562129/content/workspace-review-layout-v9.html)
@@ -18,6 +19,7 @@ The slice includes:
 
 - filesystem CSV ingestion through a CLI;
 - content-addressed local source storage;
+- exact-file submission deduplication with preserved occurrence history;
 - immutable raw records with physical-line spans;
 - typed customer, product, and order candidates;
 - deterministic normalization, FX conversion, classification, and registered repair rules;
@@ -157,13 +159,14 @@ Verdict describes the assessed terminal candidate revision. Readiness describes 
 | Table | Essential keys and constraints |
 |---|---|
 | `source_file` | UUID PK, unique SHA-256, byte size, relative content locator |
-| `source_occurrence` | UUID PK, source-file FK, filename, original locator, actor label, ingested timestamp |
-| `run` | UUID PK, occurrence FK, idempotency key, processing state, stage failure, fixed FX snapshot, rules/build revisions, immutable final counts |
+| `source_occurrence` | UUID PK, source-file FK, filename, original locator, actor label, idempotency key, ingested timestamp; unique idempotency key when supplied |
+| `run` | UUID PK, source-file FK, optional predecessor-run FK, reprocess sequence, processing state, stage failure, fixed FX snapshot, rules/build revisions, immutable final counts; one initial run per source file |
+| `run_source_occurrence` | run FK plus occurrence FK PK, relation `initiated` or `duplicate_upload`, linked timestamp; append-only |
 | `pipeline_checkpoint` | run FK plus stage PK, last committed batch and record identity, updated timestamp |
 | `pipeline_event` | UUID PK, run FK, stage, event type, structured facts, timestamp; append-only |
 | `raw_record` | deterministic UUID PK, run FK, inclusive source lines, kind, ordered fields JSONB, field count, parse metadata JSONB |
 
-The raw JSONB fields contain arrays and parser facts, not business state. Database constraints prevent updates to frozen and append-only tables through the repository layer; tests verify the service contract rather than relying solely on triggers.
+The raw JSONB fields contain arrays and parser facts, not business state. Database constraints prevent updates to frozen and append-only tables through the repository layer; tests verify the service contract rather than relying solely on triggers. A partial unique constraint permits only one run with no predecessor for each source file. Explicit reprocess runs form a predecessor chain, and the terminal run is the reuse target for later identical submissions.
 
 ### 6.2 Derived and review tables
 
@@ -227,7 +230,7 @@ retry_run(command: RetryRun, uow_factory: UnitOfWorkFactory, source_store: Sourc
 reprocess_source(command: ReprocessSource, uow: UnitOfWork, clock: Clock) -> IngestResult
 ```
 
-The CLI exposes `ingest`, `process`, `retry`, and `reprocess` commands. `ingest --process` is a convenience composition of the first two commands and does not create an alternative pipeline path.
+`IngestResult` contains `source_file_id`, `source_occurrence_id`, `run_id`, `source_reused`, `run_reused`, `duplicate_upload`, and an optional resume checkpoint. The CLI exposes `ingest`, `process`, `retry`, and `reprocess` commands. `ingest --process` is a convenience composition of the first two commands and does not create an alternative pipeline path. For a duplicate incomplete run it invokes `retry_run` on the returned run; for a completed run it performs no additional pipeline work.
 
 ### 7.3 Queries
 
@@ -256,9 +259,11 @@ Each active stage has a corresponding recoverable failure fact. A load failure r
 
 ### 8.2 Ingest
 
-Ingest streams the filesystem file through SHA-256 calculation into a temporary file, fsyncs it, and atomically renames it to `var/sources/<first-two-hash-chars>/<full-hash>`. Existing content reuses the same object. The source occurrence and run are written in one database transaction after the content object exists.
+Ingest streams the filesystem file through SHA-256 calculation into a temporary file, fsyncs it, and atomically renames it to `var/sources/<first-two-hash-chars>/<full-hash>`. Existing content reuses the same object. After the content object exists, ingest upserts and locks the `source_file` row so concurrent byte-identical submissions serialize.
 
-The same idempotency key returns the same run. Explicit reprocessing creates a new occurrence-independent run against the same source file.
+The same idempotency key returns the same occurrence and run. A new submission always preserves its own occurrence metadata. Under the source lock, ingest selects the terminal run in that source's predecessor chain. If one exists, it adds a `duplicate_upload` run-occurrence link and returns that run; it does not create or repeat pipeline data. If none exists, it creates the initial run and an `initiated` link. Exact bytes determine duplication even when filenames differ. The same filename with different bytes creates a different source file and run.
+
+When processing is requested for a reused incomplete or failed run, orchestration calls `retry_run` and resumes from the durable stage boundary. A reused completed run returns immediately. Explicit `reprocess` is the only command that creates a successor run for known content, and that successor becomes the reuse target for subsequent duplicate submissions.
 
 ### 8.3 Parse
 
@@ -318,7 +323,7 @@ The FastAPI process serves read-only product endpoints:
 | Method and path | Result |
 |---|---|
 | `GET /api/workspace` | Workspace view for `scope=current|selected|all`; current uses `run_id`, selected uses repeated `run_id` parameters |
-| `GET /api/runs/{run_id}` | Run metadata, stages, counts, records, selected review item, and evidence graph |
+| `GET /api/runs/{run_id}` | Run metadata, all linked source occurrences, duplicate-submission summary, stages, counts, records, selected review item, and evidence graph |
 | `GET /api/review-items` | Scoped and filtered queue plus selected-item details |
 | `GET /api/health` | Local process and database connectivity status |
 
@@ -343,7 +348,7 @@ The scope control exposes exactly `Current file`, `Selected files`, and `All fil
 
 ### 11.3 Run and review
 
-The run page shows file identity, absolute timestamp, count summary, pipeline stages, records, and evidence details. `/runs/:runId?review=:reviewItemId` selects the requested review item without discarding run context.
+The run page shows file identity, absolute timestamp, count summary, pipeline stages, records, and evidence details. When exact content has been submitted more than once, it shows a plain-language exact-file notice, total submission count, and an expandable list of every filename, actor label, and absolute ingest timestamp. `/runs/:runId?review=:reviewItemId` selects the requested review item without discarding run context.
 
 The review route uses a queue/detail split. Keyboard selection updates the detail panel, announces the new item, and retains filter/scope position. Pipeline-stage buttons are enabled only for reached stages with evidence; future stages are disabled and labelled not reached.
 
@@ -355,13 +360,14 @@ All component states and accessibility criteria from architecture sections 8.11 
 
 ## 12. Test design
 
-Architecture section 11 is the authoritative behavior list: 85 named unit/component tests plus the frozen golden integration test. Delivery follows test-first red-green-refactor at the smallest behavior boundary.
+Architecture section 11 is the authoritative behavior list: 92 named unit/component tests plus the frozen golden integration test. Delivery follows test-first red-green-refactor at the smallest behavior boundary.
 
 Additional integration boundaries are:
 
 - SQLAlchemy repositories against isolated Postgres;
 - Alembic migration from an empty database and downgrade/upgrade round trip during development;
 - source-store atomic write and content reuse in a temporary directory;
+- concurrent byte-identical ingest serialization against Postgres;
 - FastAPI response serialization and error mapping;
 - full pipeline equality between uninterrupted and injected-failure/retry runs;
 - web API adapters against deterministic response fixtures.
@@ -386,6 +392,7 @@ The design is implemented when:
 - a fresh local setup can migrate Postgres, import the pinned FX fixture, ingest the frozen CSV, process it, and serve the read API and web application;
 - every physical source line is accounted for and every data record has one active-rules terminal classification;
 - retries after every injected boundary produce a persisted graph equal to uninterrupted processing;
+- submitting identical bytes repeatedly preserves every occurrence while reusing one current run unless explicit reprocessing is requested;
 - staging is atomic and contains only eligible clean or repaired terminal candidates;
 - the workspace, run page, and review queue match the approved visual and behavior requirements;
 - all required unit, integration, component, accessibility, and golden tests pass without unexpected warnings;
