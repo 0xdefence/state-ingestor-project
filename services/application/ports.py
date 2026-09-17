@@ -119,6 +119,7 @@ class RunRepository(Protocol):
 
 
 class RawRecordRepository(Protocol):
+    def for_run(self, run_id: UUID) -> tuple[RawRecord, ...]: ...
     def add_batch(self, records: Sequence[RawRecord]) -> None: ...
 
 

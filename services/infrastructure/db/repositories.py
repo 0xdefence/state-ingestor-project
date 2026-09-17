@@ -259,6 +259,25 @@ class SqlAlchemyRawRecordRepository:
     def __init__(self, session: Session) -> None:
         self._session = session
 
+    def for_run(self, run_id: UUID) -> tuple[RawRecord, ...]:
+        return tuple(
+            RawRecord(
+                row.id,
+                row.run_id,
+                row.source_line_start,
+                row.source_line_end,
+                row.kind,
+                tuple(row.fields),
+                row.field_count,
+                row.parse_metadata,
+            )
+            for row in self._session.scalars(
+                select(RawRecordModel)
+                .where(RawRecordModel.run_id == run_id)
+                .order_by(RawRecordModel.parse_metadata["logical_ordinal"].as_integer())
+            )
+        )
+
     def add_batch(self, records: Sequence[RawRecord]) -> None:
         for record in records:
             values: dict[str, object] = {

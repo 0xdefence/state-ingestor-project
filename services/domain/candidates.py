@@ -49,6 +49,7 @@ class CustomerCandidate:
     lifetime_spend_gbp: CandidateField[Decimal] = CandidateField(
         FieldState.ABSENT, None, ()
     )
+    lifetime_spend_annotation: str | None = None
     entity_type: EntityType = field(default=EntityType.CUSTOMER, init=False)
 
 
@@ -66,6 +67,7 @@ class ProductCandidate:
     unit_price_gbp: CandidateField[Decimal] = CandidateField(
         FieldState.ABSENT, None, ()
     )
+    unit_price_annotation: str | None = None
     entity_type: EntityType = field(default=EntityType.PRODUCT, init=False)
 
 
@@ -86,6 +88,7 @@ class OrderCandidate:
     unit_price_gbp: CandidateField[Decimal] = CandidateField(
         FieldState.ABSENT, None, ()
     )
+    unit_price_annotation: str | None = None
     entity_type: EntityType = field(default=EntityType.ORDER, init=False)
 
 

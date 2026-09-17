@@ -147,8 +147,13 @@ class SqlAlchemyCandidateRepository:
         self._session = session
 
     def add(self, revision: CandidateRevision) -> None:
-        if self._session.get(CandidateRevisionModel, revision.id) is not None:
-            raise ValueError("candidate revisions are immutable")
+        existing = self._session.get(CandidateRevisionModel, revision.id)
+        if existing is not None:
+            if _candidate(existing) != revision or existing.payload != object_json(
+                revision.payload
+            ):
+                raise ValueError("candidate revisions are immutable: identity mismatch")
+            return
         if revision.parent_revision_id is not None:
             parent = self.get(revision.parent_revision_id)
             if (
@@ -195,6 +200,15 @@ class SqlAlchemyCandidateRepository:
         )
 
     def add_transformation(self, event: TransformationEvent) -> None:
+        existing = self._session.get(TransformationEventModel, event.id)
+        if existing is not None:
+            if (
+                _transformation(existing) != event
+                or existing.before != object_json(event.before)
+                or existing.after != object_json(event.after)
+            ):
+                raise ValueError("Transformation identity mismatch")
+            return
         self._session.add(
             TransformationEventModel(
                 id=event.id,
@@ -219,6 +233,11 @@ class SqlAlchemyCandidateRepository:
         )
 
     def add_issue(self, issue: DataQualityIssue) -> None:
+        existing = self._session.get(DataQualityIssueModel, issue.id)
+        if existing is not None:
+            if _issue(existing) != issue:
+                raise ValueError("Issue identity mismatch")
+            return
         self._session.add(
             DataQualityIssueModel(
                 id=issue.id,

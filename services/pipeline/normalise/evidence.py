@@ -31,39 +31,66 @@ class FieldPath:
 
 ISSUE_DEFINITIONS = MappingProxyType(
     {
-        code: IssueDefinition(code, severity, fields)
-        for code, severity, fields in (
-            (
-                IssueCode.INVALID_MONEY,
-                Severity.ERROR,
-                ("customer.lifetime_spend", "product.unit_price", "order.unit_price"),
-            ),
-            (
-                IssueCode.AMBIGUOUS_MONEY,
-                Severity.WARNING,
-                ("customer.lifetime_spend", "product.unit_price", "order.unit_price"),
-            ),
-            (
-                IssueCode.INVALID_DATE,
-                Severity.ERROR,
-                ("customer.signup_date", "product.listed_date", "order.ordered_at"),
-            ),
-            (
-                IssueCode.INVALID_STATUS,
-                Severity.ERROR,
-                ("customer.status", "product.status", "order.status"),
-            ),
-            (
-                IssueCode.INVALID_TAGS,
-                Severity.ERROR,
-                ("customer.tags", "product.tags", "order.tags"),
-            ),
-            (
-                IssueCode.INVALID_INTEGER,
-                Severity.ERROR,
-                ("product.stock_qty", "order.quantity"),
-            ),
-        )
+        IssueCode.INVALID_DISCRIMINATOR: IssueDefinition(
+            IssueCode.INVALID_DISCRIMINATOR, Severity.ERROR, ("record",)
+        ),
+        IssueCode.INVALID_STRUCTURE: IssueDefinition(
+            IssueCode.INVALID_STRUCTURE, Severity.ERROR, ("record",)
+        ),
+        IssueCode.MISSING_REQUIRED_VALUE: IssueDefinition(
+            IssueCode.MISSING_REQUIRED_VALUE,
+            Severity.ERROR,
+            ("customer.status", "product.status", "order.status"),
+        ),
+        IssueCode.NOTES_REJOINED: IssueDefinition(
+            IssueCode.NOTES_REJOINED,
+            Severity.WARNING,
+            ("customer.notes",),
+            TransformationCode.NOTES_REJOINED,
+        ),
+        **{
+            code: IssueDefinition(code, severity, fields)
+            for code, severity, fields in (
+                (
+                    IssueCode.INVALID_MONEY,
+                    Severity.ERROR,
+                    (
+                        "customer.lifetime_spend",
+                        "product.unit_price",
+                        "order.unit_price",
+                    ),
+                ),
+                (
+                    IssueCode.AMBIGUOUS_MONEY,
+                    Severity.WARNING,
+                    (
+                        "customer.lifetime_spend",
+                        "product.unit_price",
+                        "order.unit_price",
+                    ),
+                ),
+                (
+                    IssueCode.INVALID_DATE,
+                    Severity.ERROR,
+                    ("customer.signup_date", "product.listed_date", "order.ordered_at"),
+                ),
+                (
+                    IssueCode.INVALID_STATUS,
+                    Severity.ERROR,
+                    ("customer.status", "product.status", "order.status"),
+                ),
+                (
+                    IssueCode.INVALID_TAGS,
+                    Severity.ERROR,
+                    ("customer.tags", "product.tags", "order.tags"),
+                ),
+                (
+                    IssueCode.INVALID_INTEGER,
+                    Severity.ERROR,
+                    ("product.stock_qty", "order.quantity"),
+                ),
+            )
+        },
     }
 )
 
