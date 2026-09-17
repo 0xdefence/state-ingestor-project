@@ -106,7 +106,7 @@ class RunModel(Base):
     requested_fx_snapshot_date: Mapped[date | None]
     rules_version: Mapped[str | None]
     build_revision: Mapped[str | None]
-    counts: Mapped[dict[str, int] | None] = mapped_column(JSONB)
+    counts: Mapped[dict[str, int] | None] = mapped_column(JSONB(none_as_null=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 

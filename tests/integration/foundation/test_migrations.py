@@ -2,7 +2,10 @@
 
 import os
 from collections.abc import Iterator
-from uuid import uuid4
+from datetime import UTC, datetime
+from typing import cast
+from unittest.mock import Mock
+from uuid import UUID, uuid4
 
 import pytest
 from alembic import command
@@ -12,6 +15,19 @@ from alembic.migration import MigrationContext
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session, sessionmaker
+
+from services.application.ports import (
+    CheckpointRepository,
+    EventRepository,
+    RawRecordRepository,
+    Repositories,
+    RunRepository,
+    SourceRepository,
+)
+from services.domain.runs import RunState
+from services.infrastructure.db.models import RunModel
+from services.infrastructure.db.uow import SqlAlchemyUnitOfWork
 
 TABLES = {
     "source_file",
@@ -205,3 +221,58 @@ def test_models_match_migrated_schema(migrated_engine: Engine) -> None:
     with migrated_engine.connect() as connection:
         context = MigrationContext.configure(connection)
         assert compare_metadata(context, Base.metadata) == []
+
+
+def unused_repositories(session: Session) -> Repositories:
+    # Concrete repositories are Task 4; this regression exercises the real ORM
+    # session owned by the UoW, with stand-ins only for unused repository ports.
+    return Repositories(
+        sources=cast(SourceRepository, Mock(spec=SourceRepository)),
+        runs=cast(RunRepository, Mock(spec=RunRepository)),
+        raw_records=cast(RawRecordRepository, Mock(spec=RawRecordRepository)),
+        checkpoints=cast(CheckpointRepository, Mock(spec=CheckpointRepository)),
+        events=cast(EventRepository, Mock(spec=EventRepository)),
+    )
+
+
+@pytest.mark.parametrize(
+    ("counts", "state", "expected_sql_null"),
+    [
+        (None, RunState.CREATED, True),
+        ({"clean": 2, "needs_review": 1}, RunState.CLASSIFIED, False),
+    ],
+    ids=["pre_classification_sql_null", "classified_object_snapshot"],
+)
+def test_run_counts_round_trip_through_orm_unit_of_work(
+    migrated_engine: Engine,
+    counts: dict[str, int] | None,
+    state: RunState,
+    expected_sql_null: bool,
+) -> None:
+    run_id = UUID("00000000-0000-0000-0000-000000000099")
+    uow = SqlAlchemyUnitOfWork(sessionmaker(migrated_engine), unused_repositories)
+    with uow:
+        uow.session.add(
+            RunModel(
+                id=run_id,
+                source_file_id=UUID(SOURCE),
+                predecessor_run_id=UUID(RUN),
+                reprocess_sequence=1,
+                state=state,
+                counts=counts,
+                created_at=datetime(2026, 9, 16, 12, tzinfo=UTC),
+            )
+        )
+        uow.commit()
+
+    with uow:
+        stored_run = uow.session.get(RunModel, run_id)
+        assert stored_run is not None
+        assert stored_run.counts == counts
+        assert (
+            uow.session.scalar(
+                text("SELECT counts IS NULL FROM run WHERE id = :run_id"),
+                {"run_id": run_id},
+            )
+            is expected_sql_null
+        )
