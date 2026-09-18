@@ -1,6 +1,7 @@
+import { useRef } from "react";
 import { useSearchParams } from "react-router-dom";
 import type { FileScope } from "../../api/contracts";
-import { scopeParams, useReviews, useWorkspace } from "../../api/queries";
+import { scopeParams, useWorkspace } from "../../api/queries";
 import { displayLabel } from "../../labels";
 import { UploadPanel } from "./UploadPanel";
 import { ScopeControl } from "./ScopeControl";
@@ -17,17 +18,19 @@ export function WorkspacePage() {
         ? [...new Set(params.getAll("run_id"))]
         : [],
   };
-  const catalog = useWorkspace({ kind: "all", run_ids: [] });
+  const catalog = useWorkspace(
+    { kind: "all", run_ids: [] },
+    scope.kind === "selected",
+  );
+  const currentRun = useRef<string | null>(null);
+  if (scope.kind === "current" && scope.run_ids.length === 1)
+    currentRun.current = scope.run_ids[0];
   const workspace = useWorkspace(scope);
-  const reviews = useReviews(scope);
   const unselected = scope.kind !== "all" && scope.run_ids.length === 0;
-  const error =
-    catalog.error ?? (!unselected ? (workspace.error ?? reviews.error) : null);
-  const loading =
-    catalog.isPending ||
-    (!unselected && (workspace.isPending || reviews.isPending));
+  const error = !unselected ? workspace.error : null;
+  const loading = !unselected && workspace.isPending;
   const runs = unselected ? [] : (workspace.data?.runs ?? []);
-  const items = unselected ? [] : (reviews.data?.items ?? []);
+  const items = unselected ? [] : (workspace.data?.review_items ?? []);
   return (
     <main className="workspace">
       <header className="page-heading">
@@ -44,6 +47,7 @@ export function WorkspacePage() {
       <UploadPanel />
       <ScopeControl
         scope={scope}
+        currentRunId={currentRun.current}
         runs={catalog.data?.runs ?? []}
         onChange={(next) => setParams(scopeParams(next))}
       />
@@ -53,10 +57,8 @@ export function WorkspacePage() {
           <p>{error.message}</p>
           <button
             onClick={() => {
-              void catalog.refetch();
               if (!unselected) {
                 void workspace.refetch();
-                void reviews.refetch();
               }
             }}
           >
@@ -79,11 +81,22 @@ export function WorkspacePage() {
       ) : (
         <>
           {unselected && (
-            <p className="scope-prompt">
-              {scope.kind === "selected"
-                ? "Choose files to see their outcomes and outstanding review."
-                : "Choose a current run from Recent runs, or use All files."}
-            </p>
+            <div className="scope-prompt">
+              <p>
+                {scope.kind === "selected"
+                  ? "Choose files to see their outcomes and outstanding review."
+                  : "No current file is open."}
+              </p>
+              {scope.kind === "current" && (
+                <button
+                  onClick={() =>
+                    setParams(scopeParams({ kind: "selected", run_ids: [] }))
+                  }
+                >
+                  Choose a file
+                </button>
+              )}
+            </div>
           )}
           <div className="attention-grid">
             <AttentionSummary scope={scope} runs={runs} items={items} />
@@ -92,9 +105,14 @@ export function WorkspacePage() {
         </>
       )}
       <RecentRuns
-        runs={catalog.data?.runs ?? []}
-        loading={catalog.isPending}
-        failed={catalog.isError}
+        runs={runs}
+        loading={loading}
+        failed={workspace.isError && !unselected}
+        emptyMessage={
+          scope.kind === "all"
+            ? "No files uploaded yet."
+            : "No files in this scope."
+        }
       />
     </main>
   );

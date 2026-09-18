@@ -28,6 +28,7 @@ export interface RunView {
   state_label: string;
   stage_failure: string | null;
   created_at: AbsoluteInstant;
+  processed_at: AbsoluteInstant | null;
   counts: Record<string, number>;
   filename: string | null;
   predecessor_run_id: string | null;
@@ -46,6 +47,7 @@ export interface ReviewRow {
   classification_id: string;
   candidate_revision_id: string;
   entity_type: string | null;
+  business_identifier: string | null;
   verdict: Verdict;
   verdict_label: string;
   readiness: string;
@@ -62,6 +64,7 @@ export interface WorkspaceView {
   scope: FileScope;
   runs: RunView[];
   review_counts: Record<string, number>;
+  review_items: ReviewRow[];
 }
 export interface ReviewQueueView {
   scope: FileScope;

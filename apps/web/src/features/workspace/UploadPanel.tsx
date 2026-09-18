@@ -51,10 +51,13 @@ export function UploadPanel() {
       const uploaded =
         result ?? (await uploadFile(files[0], operator.trim(), key.current));
       setResult(uploaded);
+      await client.invalidateQueries({ queryKey: ["workspace"] });
       setPhase("processing");
-      await processRun(uploaded.run_id);
-      void client.invalidateQueries({ queryKey: ["workspace"] });
-      void client.invalidateQueries({ queryKey: ["reviews"] });
+      try {
+        await processRun(uploaded.run_id);
+      } finally {
+        await client.invalidateQueries({ queryKey: ["workspace"] });
+      }
       navigate(`/runs/${uploaded.run_id}`, {
         state: {
           duplicateNotice: uploaded.duplicate_upload

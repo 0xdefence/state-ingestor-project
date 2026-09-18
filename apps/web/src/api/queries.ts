@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { request } from "./client";
-import type { FileScope, ReviewQueueView, WorkspaceView } from "./contracts";
+import type { FileScope, WorkspaceView } from "./contracts";
 export function scopeParams(scope: FileScope) {
   const params = new URLSearchParams({ scope: scope.kind });
   if (scope.kind !== "all")
@@ -15,19 +15,11 @@ export function reviewHref(
   Object.entries(filters).forEach(([key, value]) => params.set(key, value));
   return `/reviews?${params}`;
 }
-export function useWorkspace(scope: FileScope) {
+export function useWorkspace(scope: FileScope, enabled = true) {
   return useQuery({
     queryKey: ["workspace", scope.kind, ...scope.run_ids],
     queryFn: ({ signal }) =>
       request<WorkspaceView>(`/workspace?${scopeParams(scope)}`, { signal }),
-    enabled: scope.kind === "all" || scope.run_ids.length > 0,
-  });
-}
-export function useReviews(scope: FileScope) {
-  return useQuery({
-    queryKey: ["reviews", scope.kind, ...scope.run_ids],
-    queryFn: ({ signal }) =>
-      request<ReviewQueueView>(`/reviews?${scopeParams(scope)}`, { signal }),
-    enabled: scope.kind === "all" || scope.run_ids.length > 0,
+    enabled: enabled && (scope.kind === "all" || scope.run_ids.length > 0),
   });
 }

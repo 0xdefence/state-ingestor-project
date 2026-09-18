@@ -39,6 +39,7 @@ class RunView:
     state_label: str
     stage_failure: str | None
     created_at: datetime
+    processed_at: datetime | None
     counts: ObjectView
     filename: str | None
     predecessor_run_id: UUID | None
@@ -59,6 +60,7 @@ class ReviewRowView:
     classification_id: UUID
     candidate_revision_id: UUID
     entity_type: str | None
+    business_identifier: str | None
     verdict: str
     verdict_label: str
     readiness: str
@@ -77,6 +79,7 @@ class WorkspaceView:
     scope: FileScope
     runs: tuple[RunView, ...]
     review_counts: ObjectView
+    review_items: tuple[ReviewRowView, ...]
 
 
 @dataclass(frozen=True, slots=True)

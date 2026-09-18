@@ -3,10 +3,12 @@ import type { FileScope, RunView, ScopeKind } from "../../api/contracts";
 import { displayLabel } from "../../labels";
 export function ScopeControl({
   scope,
+  currentRunId,
   runs,
   onChange,
 }: {
   scope: FileScope;
+  currentRunId: string | null;
   runs: RunView[];
   onChange: (scope: FileScope) => void;
 }) {
@@ -26,16 +28,7 @@ export function ScopeControl({
             const kind = e.target.value as ScopeKind;
             onChange({
               kind,
-              run_ids:
-                kind === "all"
-                  ? []
-                  : kind === "current"
-                    ? scope.run_ids[0]
-                      ? [scope.run_ids[0]]
-                      : runs[0]
-                        ? [runs[0].id]
-                        : []
-                    : [],
+              run_ids: kind === "current" && currentRunId ? [currentRunId] : [],
             });
           }}
         >

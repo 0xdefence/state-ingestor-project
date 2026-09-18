@@ -6,4 +6,6 @@ The workspace places upload first, explicit scope next, then a wide attention li
 
 The selected-file control uses a native disclosure with searchable checkboxes. Selected count and removable filenames remain outside the disclosure. Outcomes are links with inherited scope and verdict. Classification snapshots are distinguished from effective review state.
 
-The Task 3 contract exposes created_at, so recent-run times are labelled Uploaded. Run and review destinations are Task 5 boundaries.
+All visible workspace panels consume one scoped WorkspaceView, including its review rows and counts, from a single REPEATABLE READ snapshot. The all-run catalog only supplies file choices. Current file requires explicit run context; otherwise the page offers a no-current-file state and a Choose a file action.
+
+Review rows show a factual business identifier from known candidate evidence, or an explicit unavailable label. Recent-run Processed times come from persisted load-completed events. Unfinished runs say Not processed yet; a completed historical run without a completion event says Completion time unavailable. Creation time is never relabelled as upload or completion time. Run and review destinations remain Task 5 boundaries.

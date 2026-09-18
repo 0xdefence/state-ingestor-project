@@ -7,10 +7,12 @@ export function RecentRuns({
   runs,
   loading = false,
   failed = false,
+  emptyMessage = "No files uploaded yet.",
 }: {
   runs: RunView[];
   loading?: boolean;
   failed?: boolean;
+  emptyMessage?: string;
 }) {
   return (
     <section className="panel recent-panel" aria-labelledby="recent-title">
@@ -33,7 +35,7 @@ export function RecentRuns({
       ) : failed ? (
         <p>Recent runs are unavailable.</p>
       ) : runs.length === 0 ? (
-        <p>No files uploaded yet.</p>
+        <p>{emptyMessage}</p>
       ) : (
         <div
           className="table-scroll"
@@ -47,7 +49,7 @@ export function RecentRuns({
                 <th scope="col">File</th>
                 <th scope="col">Status</th>
                 <th scope="col">Outcomes</th>
-                <th scope="col">Uploaded</th>
+                <th scope="col">Processed</th>
                 <th scope="col">
                   <span className="sr-only">Navigation</span>
                 </th>
@@ -86,7 +88,15 @@ export function RecentRuns({
                       </div>
                     </td>
                     <td>
-                      <AbsoluteTime value={run.created_at} />
+                      {run.processed_at ? (
+                        <AbsoluteTime value={run.processed_at} />
+                      ) : (
+                        <span className="muted">
+                          {run.state === "staged"
+                            ? "Completion time unavailable"
+                            : "Not processed yet"}
+                        </span>
+                      )}
                     </td>
                     <td>
                       <Link

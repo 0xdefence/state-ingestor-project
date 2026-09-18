@@ -37,7 +37,13 @@ from services.application.views import (
     WorkspaceView,
     code_label,
 )
+from services.domain.candidates import (
+    CustomerCandidate,
+    OrderCandidate,
+    ProductCandidate,
+)
 from services.domain.decisions import legal_outcomes
+from services.domain.fields import FieldState
 from services.domain.issues import Verdict
 from services.infrastructure.db import models as m
 from services.infrastructure.db.decision_repository import SqlAlchemyDecisionRepository
@@ -142,6 +148,20 @@ class SqlAlchemyReadRepository:
             .order_by(m.SourceOccurrenceModel.ingested_at, m.SourceOccurrenceModel.id)
             .limit(1)
         )
+        processed_at = (
+            session.scalar(
+                select(m.PipelineEventModel.occurred_at)
+                .where(
+                    m.PipelineEventModel.run_id == row.id,
+                    m.PipelineEventModel.stage == "load",
+                    m.PipelineEventModel.event_type == "stage_completed",
+                )
+                .order_by(m.PipelineEventModel.occurred_at.desc())
+                .limit(1)
+            )
+            if row.state == "staged"
+            else None
+        )
         return RunView(
             row.id,
             row.source_file_id,
@@ -149,6 +169,7 @@ class SqlAlchemyReadRepository:
             code_label(row.state),
             row.stage_failure,
             row.created_at,
+            processed_at,
             _object(row.counts or {}),
             filename,
             row.predecessor_run_id,
@@ -228,6 +249,7 @@ class SqlAlchemyReadRepository:
             classification.id,
             candidate.id,
             candidate.entity_type,
+            _business_identifier(candidate),
             classification.verdict,
             code_label(classification.verdict),
             classification.readiness,
@@ -257,6 +279,7 @@ class SqlAlchemyReadRepository:
                         for state in ("pending", "approved", "rejected", "acknowledged")
                     }
                 ),
+                queue.items,
             )
 
     def _occurrence(self, session: Session, row: m.SourceOccurrenceModel) -> ObjectView:
@@ -451,6 +474,19 @@ class SqlAlchemyReadRepository:
         return EvidenceView(
             tuple(nodes[k] for k in sorted(nodes, key=lambda k: (k[0], str(k[1]))))
         )
+
+
+def _business_identifier(candidate: m.CandidateRevisionModel) -> str | None:
+    payload = decode(candidate.payload)
+    if isinstance(payload, CustomerCandidate):
+        field = payload.customer_id
+    elif isinstance(payload, ProductCandidate):
+        field = payload.sku
+    elif isinstance(payload, OrderCandidate):
+        field = payload.order_id
+    else:
+        return None
+    return field.value if field.state is FieldState.KNOWN else None
 
 
 def _references(value: Value) -> set[UUID]:

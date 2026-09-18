@@ -9,6 +9,11 @@ export const run = {
     display: "16 September 2026, 13:00 BST",
     timezone: "Europe/London",
   },
+  processed_at: {
+    instant: "2026-09-16T12:30:00Z",
+    display: "16 September 2026, 13:30 BST",
+    timezone: "Europe/London",
+  },
   counts: {
     CLEAN: 11,
     AUTO_REPAIRED: 2,
@@ -30,6 +35,7 @@ export const secondRun = {
   ...run,
   id: "22222222-2222-4222-8222-222222222222",
   filename: "orders-september.csv",
+  processed_at: null,
   state: "classified",
   stage_failure: "load_failed",
   counts: { CLEAN: 2 },
@@ -41,6 +47,7 @@ export const review = {
   classification_id: "classification-1",
   candidate_revision_id: "candidate-1",
   entity_type: "PRODUCT",
+  business_identifier: "SKU-2004" as string | null,
   verdict: "NEEDS_REVIEW",
   verdict_label: "Needs attention",
   readiness: "ready",
@@ -56,6 +63,7 @@ export const review = {
 export const workspace = {
   scope: { kind: "all", run_ids: [] },
   runs: [run, secondRun],
+  review_items: [review],
   review_counts: { pending: 1, approved: 0, rejected: 0, acknowledged: 0 },
 };
 export const uploaded = {

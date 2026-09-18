@@ -44,6 +44,11 @@ export function AttentionSummary({
                   {item.reason_summaries[0] ?? "Review this record"}
                 </Link>
                 <p>
+                  {item.business_identifier
+                    ? `Business identifier: ${item.business_identifier}`
+                    : "Business identifier unavailable"}
+                </p>
+                <p>
                   <Link
                     to={`/runs/${item.run_id}?review=${encodeURIComponent(item.id)}`}
                   >

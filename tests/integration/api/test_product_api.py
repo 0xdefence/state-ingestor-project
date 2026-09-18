@@ -195,10 +195,13 @@ def test_repeatable_read_keeps_aggregate_before_concurrent_decision(engine, tmp_
     assert isolation == ["REPEATABLE READ"]
     assert dict(view.review_counts.fields)["pending"] == 1
     assert dict(view.review_counts.fields)["approved"] == 0
+    assert [item.effective_state for item in view.review_items] == ["pending"]
+    assert {item.run_id for item in view.review_items} == {run_id}
     fresh = get_workspace(
         SqlAlchemyReadRepository(engine), WorkspaceQuery(CurrentFileScope(run_id))
     )
     assert dict(fresh.review_counts.fields)["approved"] == 1
+    assert [item.effective_state for item in fresh.review_items] == ["approved"]
     with pytest.raises(FrozenInstanceError):
         fresh.review_counts.fields = ()
 
@@ -319,5 +322,66 @@ def test_run_detail_preserves_processing_and_occurrence_lineage(app):
                 == "duplicate_upload"
             )
             assert result["occurrences"][1]["run_links"][0]["run_id"] == run_id
+
+    asyncio.run(scenario())
+
+
+def test_workspace_includes_factual_identifiers_and_completion_instants(app, engine):
+    from tests.integration.review.test_decisions import REVIEW_PRODUCT
+
+    async def scenario():
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            content = (
+                REVIEW_PRODUCT
+                + REVIEW_PRODUCT.replace("SKU-2004", "SKU-2005")
+                + "UNKNOWN,x\n"
+            ).encode()
+            upload = await client.post(
+                "/api/uploads",
+                files={"file": ("products.csv", content)},
+                data={"operator_name": "Alex"},
+            )
+            run_id = upload.json()["run_id"]
+            params = {"scope": "current", "run_id": run_id}
+            before = (await client.get("/api/workspace", params=params)).json()
+            assert before["runs"][0]["processed_at"] is None
+            await client.post(f"/api/runs/{run_id}/process")
+            with engine.begin() as conn:
+                conn.execute(
+                    text(
+                        "UPDATE pipeline_event SET occurred_at = :at "
+                        "WHERE run_id = :id AND stage = 'load' "
+                        "AND event_type = 'stage_completed'"
+                    ),
+                    {"id": run_id, "at": "2026-09-18T10:15:00Z"},
+                )
+                conn.execute(
+                    text("UPDATE run SET created_at = :at WHERE id = :id"),
+                    {"id": run_id, "at": "2026-09-16T08:00:00Z"},
+                )
+            result = (await client.get("/api/workspace", params=params)).json()
+            assert result["runs"][0]["processed_at"] == {
+                "instant": "2026-09-18T10:15:00Z",
+                "display": "18 September 2026, 11:15 BST",
+                "timezone": "Europe/London",
+            }
+            assert result["runs"][0]["processed_at"] != result["runs"][0]["created_at"]
+            assert {row["business_identifier"] for row in result["review_items"]} == {
+                "SKU-2004",
+                "SKU-2005",
+                None,
+            }
+            product_rows = [
+                r for r in result["review_items"] if r["business_identifier"]
+            ]
+            assert (
+                product_rows[0]["reason_summaries"]
+                == product_rows[1]["reason_summaries"]
+            )
+            assert result["review_counts"]["pending"] == len(result["review_items"])
+            queue = (await client.get("/api/reviews", params=params)).json()
+            assert queue["items"] == result["review_items"]
 
     asyncio.run(scenario())

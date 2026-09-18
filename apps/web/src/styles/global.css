@@ -510,3 +510,7 @@ time {
     scroll-behavior: auto;
   }
 }
+
+.muted {
+  color: var(--muted);
+}

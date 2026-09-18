@@ -54,7 +54,15 @@ beforeEach(() => {
           ? workspace.runs
           : workspace.runs.filter((r) => query.getAll("run_id").includes(r.id));
       if (url.startsWith("/api/workspace"))
-        return Response.json({ ...workspace, runs });
+        return Response.json({
+          ...workspace,
+          runs,
+          review_items: empty
+            ? []
+            : workspace.review_items.filter((item) =>
+                runs.some((r) => r.id === item.run_id),
+              ),
+        });
       if (url.startsWith("/api/reviews"))
         return Response.json({
           scope: workspace.scope,
@@ -243,10 +251,9 @@ test("renders long filenames, labelled status and absolute times", async () => {
   await waitFor(() =>
     expect(within(table).getAllByText(run.filename).length).toBeGreaterThan(0),
   );
-  expect(within(table).getByText("Processed")).toBeVisible();
-  expect(
-    within(table).getAllByText("16 September 2026, 13:00 BST"),
-  ).toHaveLength(2);
+  expect(within(table).getByRole("cell", { name: "Processed" })).toBeVisible();
+  expect(within(table).getByText("16 September 2026, 13:30 BST")).toBeVisible();
+  expect(within(table).getByText("Not processed yet")).toBeVisible();
   expect(table.textContent).not.toMatch(/today|yesterday|just now|ago/i);
   run.filename = original;
 });
@@ -321,4 +328,161 @@ test("recent runs show newest uploads first even when the API returns oldest fir
   } finally {
     secondRun.created_at = original;
   }
+});
+
+for (const scope of ["selected", "current"])
+  test(`${scope} recent runs contain only the scoped run`, async () => {
+    renderWorkspace(`/?scope=${scope}&run_id=${run.id}`);
+    const table = await screen.findByRole("table");
+    expect(
+      within(table).getByRole("link", { name: run.filename }),
+    ).toBeVisible();
+    expect(
+      within(table).queryByRole("link", { name: secondRun.filename }),
+    ).not.toBeInTheDocument();
+  });
+test("workspace attention uses the single workspace response and never requests an independent queue", async () => {
+  const original = workspace.review_items;
+  workspace.review_items = [
+    {
+      ...review,
+      business_identifier: "SKU-OTHER",
+      reason_summaries: ["Workspace snapshot reason"],
+    },
+  ];
+  try {
+    renderWorkspace();
+    await screen.findByText("Workspace snapshot reason");
+    expect(
+      requests.filter((r) => r.url.startsWith("/api/reviews")),
+    ).toHaveLength(0);
+  } finally {
+    workspace.review_items = original;
+  }
+});
+for (const url of ["/", `/?scope=selected&run_id=${run.id}`])
+  test(`switching ${url} to Current does not invent current context`, async () => {
+    renderWorkspace(url);
+    const user = userEvent.setup();
+    await screen.findByRole("table");
+    await user.selectOptions(screen.getByLabelText("File scope"), "current");
+    expect(screen.getByText("No current file is open.")).toBeVisible();
+    expect(screen.queryByRole("table")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Choose a file" })).toBeVisible();
+    expect(requests.some((r) => r.url.includes("scope=current"))).toBe(false);
+    await user.click(screen.getByRole("button", { name: "Choose a file" }));
+    expect(screen.getByRole("combobox", { name: "File scope" })).toHaveValue(
+      "selected",
+    );
+  });
+test("explicit current context survives switching scopes without borrowing selected files", async () => {
+  renderWorkspace(`/?scope=current&run_id=${secondRun.id}`);
+  const user = userEvent.setup();
+  await screen.findByRole("table");
+  await user.selectOptions(screen.getByLabelText("File scope"), "all");
+  await user.selectOptions(screen.getByLabelText("File scope"), "current");
+  const table = await screen.findByRole("table");
+  expect(within(table).queryByText(run.filename)).not.toBeInTheDocument();
+  expect(within(table).getByText(secondRun.filename)).toBeVisible();
+});
+test("same-reason records show their factual business identifiers and a missing fallback", async () => {
+  const original = workspace.review_items;
+  workspace.review_items = [
+    review,
+    { ...review, id: "review-2", business_identifier: "SKU-2005" },
+    {
+      ...review,
+      id: "review-3",
+      business_identifier: null,
+    },
+  ];
+  try {
+    renderWorkspace();
+    expect(
+      await screen.findByText("Business identifier: SKU-2004"),
+    ).toBeVisible();
+    expect(screen.getByText("Business identifier: SKU-2005")).toBeVisible();
+    expect(screen.getByText("Business identifier unavailable")).toBeVisible();
+  } finally {
+    workspace.review_items = original;
+  }
+});
+test("upload commit and failed processing both refresh the mounted workspace", async () => {
+  let state = "empty";
+  let finish!: () => void;
+  const base = globalThis.fetch;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      if (url === "/api/uploads") {
+        state = "uploaded";
+        return Response.json(uploaded);
+      }
+      if (url.endsWith("/process"))
+        return new Promise<Response>((resolve) => {
+          finish = () => {
+            state = "failed";
+            resolve(
+              new Response(
+                JSON.stringify({
+                  error: {
+                    code: "internal_error",
+                    message: "Processing failed",
+                    details: {},
+                  },
+                }),
+                { status: 500 },
+              ),
+            );
+          };
+        });
+      if (url.startsWith("/api/workspace"))
+        return Response.json({
+          ...workspace,
+          runs:
+            state === "empty"
+              ? []
+              : [
+                  {
+                    ...run,
+                    state: "ingested",
+                    processed_at: null,
+                    stage_failure: state === "failed" ? "parse_failed" : null,
+                    counts: {},
+                  },
+                ],
+          review_items: [],
+          review_counts: {
+            pending: 0,
+            approved: 0,
+            rejected: 0,
+            acknowledged: 0,
+          },
+        });
+      return base(input, init);
+    }),
+  );
+  renderWorkspace();
+  await screen.findByText("No files uploaded yet.");
+  const user = await fillUpload();
+  await user.click(screen.getByRole("button", { name: "Upload and process" }));
+  expect(await screen.findByRole("table")).toHaveTextContent(run.filename);
+  expect(screen.getByRole("button", { name: "Processing…" })).toBeDisabled();
+  finish();
+  await screen.findByRole("alert");
+  await waitFor(() =>
+    expect(screen.getByRole("table")).toHaveTextContent("CSV reading failed"),
+  );
+  expect(screen.queryByText("No files uploaded yet.")).not.toBeInTheDocument();
+});
+
+test("completed and unfinished runs use processing evidence, never creation time", async () => {
+  renderWorkspace();
+  const table = await screen.findByRole("table");
+  expect(within(table).getByText("16 September 2026, 13:30 BST")).toBeVisible();
+  expect(within(table).getByText("Not processed yet")).toBeVisible();
+  expect(
+    within(table).queryByText("16 September 2026, 13:00 BST"),
+  ).not.toBeInTheDocument();
 });
