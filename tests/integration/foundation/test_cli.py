@@ -40,7 +40,11 @@ def test_cli_persists_ingest_process_retry_and_reprocess(
     runner = CliRunner()
     source = tmp_path / "source.csv"
     source.write_bytes(b"ORDER,1\nORDER,2\n")
-    env = {"DATABASE_URL": postgres_url, "SOURCE_ROOT": str(tmp_path / "frozen")}
+    env = {
+        "DATABASE_URL": postgres_url,
+        "SOURCE_ROOT": str(tmp_path / "frozen"),
+        "APPLICATION_BUILD_REVISION": "cli-build-first",
+    }
     result = runner.invoke(app, ["ingest", str(source)], env=env)
     assert result.exit_code == 0, result.output
     engine = create_engine(postgres_url)
@@ -52,8 +56,10 @@ def test_cli_persists_ingest_process_retry_and_reprocess(
             occurrence_id = occurrence.id
             assert occurrence.ingested_at == FixedClock().now()
             assert first.state == RunState.INGESTED
+            assert first.build_revision == "cli-build-first"
             assert not session.scalars(select(RawRecordModel)).all()
         source.unlink()
+        env["APPLICATION_BUILD_REVISION"] = "cli-build-later"
         for action in ["process", "retry"]:
             result = runner.invoke(
                 app, [action, str(run_id), "--batch-size", "1"], env=env
@@ -71,6 +77,7 @@ def test_cli_persists_ingest_process_retry_and_reprocess(
                 for checkpoint in checkpoints
             } == {("parse", 2, 2), ("normalise", 2, 2)}
             assert session.get(RunModel, run_id).state is RunState.STAGED
+            assert session.get(RunModel, run_id).build_revision == "cli-build-first"
         result = runner.invoke(
             app,
             ["reprocess", str(source_id), "--occurrence-id", str(occurrence_id)],
@@ -82,6 +89,7 @@ def test_cli_persists_ingest_process_retry_and_reprocess(
                 select(RunModel).where(RunModel.predecessor_run_id == run_id)
             ).one()
             assert successor.state == RunState.INGESTED
+            assert successor.build_revision == "cli-build-later"
         missing = runner.invoke(
             app,
             ["reprocess", str(source_id), "--occurrence-id", str(UUID(int=999))],

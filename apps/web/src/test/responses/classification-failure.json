@@ -1,0 +1,657 @@
+{
+  "run": {
+    "id": "63d768b6-848f-4d52-9b3b-c2c8e39edaaf",
+    "source_file_id": "41d7bbb4-1f9e-4881-94d9-2646045e8698",
+    "state": "normalised",
+    "state_label": "Normalised",
+    "stage_failure": "classify_failed",
+    "created_at": {
+      "instant": "2026-09-17T12:00:00Z",
+      "display": "17 September 2026, 13:00 BST",
+      "timezone": "Europe/London"
+    },
+    "processed_at": null,
+    "counts": {},
+    "filename": "rules.csv",
+    "predecessor_run_id": null,
+    "reprocess_sequence": 0,
+    "source_sha256": "392772157825b8d0cbb82ed5c7d03e11f127269e8dd0a6ca7912f4c88baaf798",
+    "source_byte_size": 77,
+    "fx_snapshot_id": "04f03d6c-4bea-5271-a447-e5ec2e522684",
+    "requested_fx_snapshot_date": null,
+    "rules_version": null,
+    "build_revision": "separate-build-revision"
+  },
+  "occurrences": [
+    {
+      "id": "14fcc6cd-455f-4a8e-b92f-3e6ba879754f",
+      "source_file_id": "41d7bbb4-1f9e-4881-94d9-2646045e8698",
+      "filename": "rules.csv",
+      "original_locator": "fixture",
+      "actor_label": "/private/var/folders/6l/_tmm_zcd4ts_gr8lxtz0pjqm0000gn/T/pytest-of-elibelilty/pytest-161/test_classification_rollback_i0",
+      "idempotency_key": null,
+      "ingested_at": {
+        "instant": "2026-09-17T12:00:00Z",
+        "display": "17 September 2026, 13:00 BST",
+        "timezone": "Europe/London"
+      },
+      "run_links": [
+        {
+          "run_id": "63d768b6-848f-4d52-9b3b-c2c8e39edaaf",
+          "source_occurrence_id": "14fcc6cd-455f-4a8e-b92f-3e6ba879754f",
+          "relation": "initiated",
+          "linked_at": {
+            "instant": "2026-09-17T12:00:00Z",
+            "display": "17 September 2026, 13:00 BST",
+            "timezone": "Europe/London"
+          }
+        }
+      ]
+    }
+  ],
+  "checkpoints": [
+    {
+      "run_id": "63d768b6-848f-4d52-9b3b-c2c8e39edaaf",
+      "stage": "normalise",
+      "stage_label": "Normalise",
+      "batch_number": 1,
+      "record_ordinal": 1,
+      "last_record_id": "7f6a9d7e-049a-5adc-89e8-942e29318f7d",
+      "updated_at": {
+        "instant": "2026-09-17T12:00:00Z",
+        "display": "17 September 2026, 13:00 BST",
+        "timezone": "Europe/London"
+      }
+    },
+    {
+      "run_id": "63d768b6-848f-4d52-9b3b-c2c8e39edaaf",
+      "stage": "parse",
+      "stage_label": "Parse",
+      "batch_number": 1,
+      "record_ordinal": 1,
+      "last_record_id": "7f6a9d7e-049a-5adc-89e8-942e29318f7d",
+      "updated_at": {
+        "instant": "2026-09-17T12:00:00Z",
+        "display": "17 September 2026, 13:00 BST",
+        "timezone": "Europe/London"
+      }
+    }
+  ],
+  "events": [
+    {
+      "id": "2a19d42d-8bb7-5405-9322-141cdf3b1654",
+      "run_id": "63d768b6-848f-4d52-9b3b-c2c8e39edaaf",
+      "stage": "classify",
+      "stage_label": "Classify",
+      "event_type": "stage_failed",
+      "event_type_label": "Stage failed",
+      "facts": {
+        "error_type": "RuntimeError",
+        "attempt_number": 1
+      },
+      "occurred_at": {
+        "instant": "2026-09-17T12:00:00Z",
+        "display": "17 September 2026, 13:00 BST",
+        "timezone": "Europe/London"
+      }
+    },
+    {
+      "id": "42111288-f124-5360-bc28-6b3d259ed828",
+      "run_id": "63d768b6-848f-4d52-9b3b-c2c8e39edaaf",
+      "stage": "parse",
+      "stage_label": "Parse",
+      "event_type": "stage_completed",
+      "event_type_label": "Stage completed",
+      "facts": {
+        "batch_number": 1,
+        "attempt_number": 1,
+        "record_ordinal": 1
+      },
+      "occurred_at": {
+        "instant": "2026-09-17T12:00:00Z",
+        "display": "17 September 2026, 13:00 BST",
+        "timezone": "Europe/London"
+      }
+    },
+    {
+      "id": "54506564-cd5f-50a3-94e1-2f2cb3da1082",
+      "run_id": "63d768b6-848f-4d52-9b3b-c2c8e39edaaf",
+      "stage": "normalise",
+      "stage_label": "Normalise",
+      "event_type": "stage_started",
+      "event_type_label": "Stage started",
+      "facts": {
+        "batch_number": 0,
+        "attempt_number": 1,
+        "record_ordinal": 0
+      },
+      "occurred_at": {
+        "instant": "2026-09-17T12:00:00Z",
+        "display": "17 September 2026, 13:00 BST",
+        "timezone": "Europe/London"
+      }
+    },
+    {
+      "id": "5e14cc91-7856-566c-b32f-4130b19aba8e",
+      "run_id": "63d768b6-848f-4d52-9b3b-c2c8e39edaaf",
+      "stage": "normalise",
+      "stage_label": "Normalise",
+      "event_type": "batch_committed",
+      "event_type_label": "Batch committed",
+      "facts": {
+        "batch_number": 1,
+        "record_count": 1,
+        "attempt_number": 1,
+        "record_ordinal": 1
+      },
+      "occurred_at": {
+        "instant": "2026-09-17T12:00:00Z",
+        "display": "17 September 2026, 13:00 BST",
+        "timezone": "Europe/London"
+      }
+    },
+    {
+      "id": "7823f127-e08f-5e2f-875f-928492c8a89b",
+      "run_id": "63d768b6-848f-4d52-9b3b-c2c8e39edaaf",
+      "stage": "classify",
+      "stage_label": "Classify",
+      "event_type": "stage_started",
+      "event_type_label": "Stage started",
+      "facts": {
+        "record_count": 1,
+        "attempt_number": 1
+      },
+      "occurred_at": {
+        "instant": "2026-09-17T12:00:00Z",
+        "display": "17 September 2026, 13:00 BST",
+        "timezone": "Europe/London"
+      }
+    },
+    {
+      "id": "e67a4eb0-55ac-5570-86fa-fb542feb0546",
+      "run_id": "63d768b6-848f-4d52-9b3b-c2c8e39edaaf",
+      "stage": "parse",
+      "stage_label": "Parse",
+      "event_type": "batch_committed",
+      "event_type_label": "Batch committed",
+      "facts": {
+        "batch_number": 1,
+        "record_count": 1,
+        "attempt_number": 1,
+        "record_ordinal": 1
+      },
+      "occurred_at": {
+        "instant": "2026-09-17T12:00:00Z",
+        "display": "17 September 2026, 13:00 BST",
+        "timezone": "Europe/London"
+      }
+    },
+    {
+      "id": "e9785cb3-6544-5f35-9950-677a8b5dcfa7",
+      "run_id": "63d768b6-848f-4d52-9b3b-c2c8e39edaaf",
+      "stage": "normalise",
+      "stage_label": "Normalise",
+      "event_type": "stage_completed",
+      "event_type_label": "Stage completed",
+      "facts": {
+        "batch_number": 1,
+        "attempt_number": 1,
+        "record_ordinal": 1
+      },
+      "occurred_at": {
+        "instant": "2026-09-17T12:00:00Z",
+        "display": "17 September 2026, 13:00 BST",
+        "timezone": "Europe/London"
+      }
+    },
+    {
+      "id": "f2750801-fd93-5f48-8f5a-2155563c6b6b",
+      "run_id": "63d768b6-848f-4d52-9b3b-c2c8e39edaaf",
+      "stage": "parse",
+      "stage_label": "Parse",
+      "event_type": "stage_started",
+      "event_type_label": "Stage started",
+      "facts": {
+        "batch_number": 0,
+        "attempt_number": 1,
+        "record_ordinal": 0
+      },
+      "occurred_at": {
+        "instant": "2026-09-17T12:00:00Z",
+        "display": "17 September 2026, 13:00 BST",
+        "timezone": "Europe/London"
+      }
+    }
+  ],
+  "records": [
+    {
+      "id": "7f6a9d7e-049a-5adc-89e8-942e29318f7d",
+      "kind": "data",
+      "source_line_start": 1,
+      "source_line_end": 1,
+      "candidate_revision_id": "d72db553-0c58-58b4-a4d5-9d796ceffb46",
+      "business_identifier": "SKU-2004",
+      "classification_id": null,
+      "verdict": null,
+      "review_item_id": null
+    }
+  ],
+  "evidence": {
+    "nodes": [
+      {
+        "kind": "candidate_revision",
+        "id": "d72db553-0c58-58b4-a4d5-9d796ceffb46",
+        "attributes": {
+          "id": "d72db553-0c58-58b4-a4d5-9d796ceffb46",
+          "raw_record_id": "7f6a9d7e-049a-5adc-89e8-942e29318f7d",
+          "parent_revision_id": null,
+          "entity_type": "product",
+          "entity_type_label": "Product",
+          "revision_number": 1,
+          "origin": "normalise",
+          "origin_label": "Normalise",
+          "payload": {
+            "sku": {
+              "state": "known",
+              "value": "SKU-2004",
+              "source_refs": [
+                {
+                  "raw_record_id": "7f6a9d7e-049a-5adc-89e8-942e29318f7d",
+                  "field_index": 1
+                }
+              ],
+              "transformation_refs": [],
+              "issue_refs": []
+            },
+            "name": {
+              "state": "known",
+              "value": "Widget",
+              "source_refs": [
+                {
+                  "raw_record_id": "7f6a9d7e-049a-5adc-89e8-942e29318f7d",
+                  "field_index": 2
+                }
+              ],
+              "transformation_refs": [],
+              "issue_refs": []
+            },
+            "category": {
+              "state": "known",
+              "value": "Electronics",
+              "source_refs": [
+                {
+                  "raw_record_id": "7f6a9d7e-049a-5adc-89e8-942e29318f7d",
+                  "field_index": 3
+                }
+              ],
+              "transformation_refs": [],
+              "issue_refs": []
+            },
+            "unit_price": {
+              "state": "known",
+              "value": {
+                "amount": "19.99",
+                "currency": "GBP"
+              },
+              "source_refs": [
+                {
+                  "raw_record_id": "7f6a9d7e-049a-5adc-89e8-942e29318f7d",
+                  "field_index": 4
+                }
+              ],
+              "transformation_refs": [
+                "937d24ea-9720-5eb1-8337-24e6e554f7cc"
+              ],
+              "issue_refs": []
+            },
+            "stock_qty": {
+              "state": "known",
+              "value": 5,
+              "source_refs": [
+                {
+                  "raw_record_id": "7f6a9d7e-049a-5adc-89e8-942e29318f7d",
+                  "field_index": 5
+                }
+              ],
+              "transformation_refs": [
+                "9cc9bdb0-6198-5efd-82db-103b36c0db71"
+              ],
+              "issue_refs": []
+            },
+            "listed_date": {
+              "state": "known",
+              "value": "2024-01-01",
+              "source_refs": [
+                {
+                  "raw_record_id": "7f6a9d7e-049a-5adc-89e8-942e29318f7d",
+                  "field_index": 6
+                }
+              ],
+              "transformation_refs": [
+                "5ba4573f-3c20-5665-9c01-89e6b8941199"
+              ],
+              "issue_refs": []
+            },
+            "status": {
+              "state": "known",
+              "value": "in_stock",
+              "source_refs": [
+                {
+                  "raw_record_id": "7f6a9d7e-049a-5adc-89e8-942e29318f7d",
+                  "field_index": 7
+                }
+              ],
+              "transformation_refs": [],
+              "issue_refs": []
+            },
+            "tags": {
+              "state": "known",
+              "value": [
+                "accessories"
+              ],
+              "source_refs": [
+                {
+                  "raw_record_id": "7f6a9d7e-049a-5adc-89e8-942e29318f7d",
+                  "field_index": 8
+                }
+              ],
+              "transformation_refs": [
+                "2633b8a9-ed70-5674-839c-5004924d8f57"
+              ],
+              "issue_refs": []
+            },
+            "notes": {
+              "state": "absent",
+              "value": null,
+              "source_refs": [
+                {
+                  "raw_record_id": "7f6a9d7e-049a-5adc-89e8-942e29318f7d",
+                  "field_index": 9
+                }
+              ],
+              "transformation_refs": [],
+              "issue_refs": []
+            },
+            "unit_price_gbp": {
+              "state": "absent",
+              "value": null,
+              "source_refs": [],
+              "transformation_refs": [],
+              "issue_refs": []
+            },
+            "unit_price_annotation": null,
+            "entity_type": "product"
+          },
+          "created_at": {
+            "instant": "2026-09-17T12:00:00Z",
+            "display": "17 September 2026, 13:00 BST",
+            "timezone": "Europe/London"
+          }
+        }
+      },
+      {
+        "kind": "fx_snapshot",
+        "id": "04f03d6c-4bea-5271-a447-e5ec2e522684",
+        "attributes": {
+          "id": "04f03d6c-4bea-5271-a447-e5ec2e522684",
+          "manifest_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "effective_at": {
+            "instant": "2026-09-17T12:00:00Z",
+            "display": "17 September 2026, 13:00 BST",
+            "timezone": "Europe/London"
+          },
+          "source": "ECB",
+          "source_url": "https://example.org/ecb"
+        }
+      },
+      {
+        "kind": "raw_record",
+        "id": "7f6a9d7e-049a-5adc-89e8-942e29318f7d",
+        "attributes": {
+          "id": "7f6a9d7e-049a-5adc-89e8-942e29318f7d",
+          "run_id": "63d768b6-848f-4d52-9b3b-c2c8e39edaaf",
+          "source_line_start": 1,
+          "source_line_end": 1,
+          "kind": "data",
+          "kind_label": "Data",
+          "fields": [
+            "PRODUCT",
+            "SKU-2004",
+            "Widget",
+            "Electronics",
+            "19.99",
+            "5",
+            "2024-01-01",
+            "in_stock",
+            "accessories",
+            ""
+          ],
+          "field_count": 10,
+          "parse_metadata": {
+            "parser": "csv.reader",
+            "dialect": {
+              "strict": true,
+              "delimiter": ",",
+              "quotechar": "\"",
+              "doublequote": true,
+              "skipinitialspace": false
+            },
+            "newline": "",
+            "encoding": "utf-8-sig",
+            "logical_ordinal": 1
+          }
+        }
+      },
+      {
+        "kind": "run",
+        "id": "63d768b6-848f-4d52-9b3b-c2c8e39edaaf",
+        "attributes": {
+          "id": "63d768b6-848f-4d52-9b3b-c2c8e39edaaf",
+          "source_file_id": "41d7bbb4-1f9e-4881-94d9-2646045e8698",
+          "predecessor_run_id": null,
+          "reprocess_sequence": 0,
+          "state": "normalised",
+          "state_label": "Normalised",
+          "stage_failure": "classify_failed",
+          "fx_snapshot_id": "04f03d6c-4bea-5271-a447-e5ec2e522684",
+          "requested_fx_snapshot_date": null,
+          "rules_version": null,
+          "build_revision": "separate-build-revision",
+          "counts": null,
+          "created_at": {
+            "instant": "2026-09-17T12:00:00Z",
+            "display": "17 September 2026, 13:00 BST",
+            "timezone": "Europe/London"
+          }
+        }
+      },
+      {
+        "kind": "source_file",
+        "id": "41d7bbb4-1f9e-4881-94d9-2646045e8698",
+        "attributes": {
+          "id": "41d7bbb4-1f9e-4881-94d9-2646045e8698",
+          "sha256": "392772157825b8d0cbb82ed5c7d03e11f127269e8dd0a6ca7912f4c88baaf798",
+          "byte_size": 77
+        }
+      },
+      {
+        "kind": "source_occurrence",
+        "id": "14fcc6cd-455f-4a8e-b92f-3e6ba879754f",
+        "attributes": {
+          "id": "14fcc6cd-455f-4a8e-b92f-3e6ba879754f",
+          "source_file_id": "41d7bbb4-1f9e-4881-94d9-2646045e8698",
+          "filename": "rules.csv",
+          "original_locator": "fixture",
+          "actor_label": "/private/var/folders/6l/_tmm_zcd4ts_gr8lxtz0pjqm0000gn/T/pytest-of-elibelilty/pytest-161/test_classification_rollback_i0",
+          "idempotency_key": null,
+          "ingested_at": {
+            "instant": "2026-09-17T12:00:00Z",
+            "display": "17 September 2026, 13:00 BST",
+            "timezone": "Europe/London"
+          },
+          "run_links": [
+            {
+              "run_id": "63d768b6-848f-4d52-9b3b-c2c8e39edaaf",
+              "source_occurrence_id": "14fcc6cd-455f-4a8e-b92f-3e6ba879754f",
+              "relation": "initiated",
+              "linked_at": {
+                "instant": "2026-09-17T12:00:00Z",
+                "display": "17 September 2026, 13:00 BST",
+                "timezone": "Europe/London"
+              }
+            }
+          ]
+        }
+      },
+      {
+        "kind": "transformation_event",
+        "id": "2633b8a9-ed70-5674-839c-5004924d8f57",
+        "attributes": {
+          "id": "2633b8a9-ed70-5674-839c-5004924d8f57",
+          "candidate_revision_id": "d72db553-0c58-58b4-a4d5-9d796ceffb46",
+          "operation": "PARSE_TAGS",
+          "operation_label": "Parse tags",
+          "field_path": "product.tags",
+          "before": {
+            "state": "known",
+            "value": "accessories",
+            "source_refs": [
+              {
+                "raw_record_id": "7f6a9d7e-049a-5adc-89e8-942e29318f7d",
+                "field_index": 8
+              }
+            ],
+            "transformation_refs": [],
+            "issue_refs": []
+          },
+          "after": {
+            "state": "known",
+            "value": [
+              "accessories"
+            ],
+            "source_refs": [
+              {
+                "raw_record_id": "7f6a9d7e-049a-5adc-89e8-942e29318f7d",
+                "field_index": 8
+              }
+            ],
+            "transformation_refs": [],
+            "issue_refs": []
+          },
+          "sequence": 4
+        }
+      },
+      {
+        "kind": "transformation_event",
+        "id": "5ba4573f-3c20-5665-9c01-89e6b8941199",
+        "attributes": {
+          "id": "5ba4573f-3c20-5665-9c01-89e6b8941199",
+          "candidate_revision_id": "d72db553-0c58-58b4-a4d5-9d796ceffb46",
+          "operation": "PARSE_DATE",
+          "operation_label": "Parse date",
+          "field_path": "product.listed_date",
+          "before": {
+            "state": "known",
+            "value": "2024-01-01",
+            "source_refs": [
+              {
+                "raw_record_id": "7f6a9d7e-049a-5adc-89e8-942e29318f7d",
+                "field_index": 6
+              }
+            ],
+            "transformation_refs": [],
+            "issue_refs": []
+          },
+          "after": {
+            "state": "known",
+            "value": "2024-01-01",
+            "source_refs": [
+              {
+                "raw_record_id": "7f6a9d7e-049a-5adc-89e8-942e29318f7d",
+                "field_index": 6
+              }
+            ],
+            "transformation_refs": [],
+            "issue_refs": []
+          },
+          "sequence": 3
+        }
+      },
+      {
+        "kind": "transformation_event",
+        "id": "937d24ea-9720-5eb1-8337-24e6e554f7cc",
+        "attributes": {
+          "id": "937d24ea-9720-5eb1-8337-24e6e554f7cc",
+          "candidate_revision_id": "d72db553-0c58-58b4-a4d5-9d796ceffb46",
+          "operation": "PARSE_MONEY",
+          "operation_label": "Parse money",
+          "field_path": "product.unit_price",
+          "before": {
+            "state": "known",
+            "value": "19.99",
+            "source_refs": [
+              {
+                "raw_record_id": "7f6a9d7e-049a-5adc-89e8-942e29318f7d",
+                "field_index": 4
+              }
+            ],
+            "transformation_refs": [],
+            "issue_refs": []
+          },
+          "after": {
+            "state": "known",
+            "value": {
+              "amount": "19.99",
+              "currency": "GBP"
+            },
+            "source_refs": [
+              {
+                "raw_record_id": "7f6a9d7e-049a-5adc-89e8-942e29318f7d",
+                "field_index": 4
+              }
+            ],
+            "transformation_refs": [],
+            "issue_refs": []
+          },
+          "sequence": 1
+        }
+      },
+      {
+        "kind": "transformation_event",
+        "id": "9cc9bdb0-6198-5efd-82db-103b36c0db71",
+        "attributes": {
+          "id": "9cc9bdb0-6198-5efd-82db-103b36c0db71",
+          "candidate_revision_id": "d72db553-0c58-58b4-a4d5-9d796ceffb46",
+          "operation": "PARSE_INTEGER",
+          "operation_label": "Parse integer",
+          "field_path": "product.stock_qty",
+          "before": {
+            "state": "known",
+            "value": "5",
+            "source_refs": [
+              {
+                "raw_record_id": "7f6a9d7e-049a-5adc-89e8-942e29318f7d",
+                "field_index": 5
+              }
+            ],
+            "transformation_refs": [],
+            "issue_refs": []
+          },
+          "after": {
+            "state": "known",
+            "value": 5,
+            "source_refs": [
+              {
+                "raw_record_id": "7f6a9d7e-049a-5adc-89e8-942e29318f7d",
+                "field_index": 5
+              }
+            ],
+            "transformation_refs": [],
+            "issue_refs": []
+          },
+          "sequence": 2
+        }
+      }
+    ]
+  }
+}

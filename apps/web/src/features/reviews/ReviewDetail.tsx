@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import { Link } from "react-router-dom";
+import type { FileScope } from "../../api/contracts";
 import { useReview } from "../../api/queries";
 import { Status } from "../../components/Status";
 import { EvidencePanel, object, Value } from "../runs/EvidencePanel";
@@ -8,9 +9,11 @@ import { DecisionHistory } from "./DecisionHistory";
 export function ReviewDetail({
   id,
   expectedRunId,
+  scope,
 }: {
   id: string;
   expectedRunId?: string;
+  scope?: FileScope;
 }) {
   const query = useReview(id);
   const heading = useRef<HTMLHeadingElement>(null);
@@ -43,6 +46,19 @@ export function ReviewDetail({
         <p>
           This review belongs to another file. Open its source run to inspect
           and decide.
+        </p>
+        <Link to={`/runs/${item.run_id}?review=${item.id}`}>
+          Open the matching run
+        </Link>
+      </section>
+    );
+  if (scope && scope.kind !== "all" && !scope.run_ids.includes(item.run_id))
+    return (
+      <section className="panel" role="alert">
+        <h2>Record outside this file scope</h2>
+        <p>
+          This record is outside the selected file scope. Include its file or
+          open its source run to inspect and decide.
         </p>
         <Link to={`/runs/${item.run_id}?review=${item.id}`}>
           Open the matching run

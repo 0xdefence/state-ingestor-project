@@ -3,7 +3,8 @@
 from dataclasses import dataclass, fields, replace
 from uuid import UUID
 
-from services.application.ports import Clock, UnitOfWork
+from services.application.ports import Clock, PipelineEvent, UnitOfWork
+from services.application.process import PIPELINE_EVENT_NAMESPACE
 from services.domain.candidates import (
     CustomerCandidate,
     OrderCandidate,
@@ -235,56 +236,130 @@ def classify_run(
         )
         # No writer, including state/event writers, is reached before this check.
         graph.check_barrier()
-        if prior_observations is None:
-            graph = replace(
-                graph, prior_observations=uow.canonicals.prior_observations()
+        attempt: int | None = None
+        if run.state is RunState.NORMALISED:
+            attempt = uow.events.next_attempt_number(run_id, "classify")
+            _stage_event(
+                uow,
+                run_id,
+                "stage_retried" if attempt > 1 else "stage_started",
+                attempt,
+                clock,
+                {"record_count": len(initial)},
             )
-        # Frozen initial payload refs identify normalization evidence. Validation
-        # may also attach issues to revision 1; those are recomputed and verified.
-        normalization_issues: set[UUID] = set()
-        for revision in initial:
-            if isinstance(revision.payload, RejectedCandidateShell):
-                normalization_issues.update(revision.payload.issue_refs)
-            else:
-                for item in fields(revision.payload):
-                    value: object = getattr(revision.payload, item.name)
-                    if isinstance(value, CandidateField):
-                        normalization_issues.update(value.issue_refs)
-        graph = replace(
-            graph,
-            fx_snapshot=uow.fx.get(run.fx_snapshot_id) if run.fx_snapshot_id else None,
-            issues=tuple(
-                i
-                for r in initial
-                for i in uow.candidates.issues(r.id)
-                if i.id in normalization_issues
+            uow.runs.set_state(run_id, RunState.NORMALISED)
+            uow.commit()
+        try:
+            if prior_observations is None:
+                graph = replace(
+                    graph, prior_observations=uow.canonicals.prior_observations()
+                )
+            # Frozen initial payload refs identify normalization evidence. Validation
+            # may also attach issues to revision 1; those are recomputed and verified.
+            normalization_issues: set[UUID] = set()
+            for revision in initial:
+                if isinstance(revision.payload, RejectedCandidateShell):
+                    normalization_issues.update(revision.payload.issue_refs)
+                else:
+                    for item in fields(revision.payload):
+                        value: object = getattr(revision.payload, item.name)
+                        if isinstance(value, CandidateField):
+                            normalization_issues.update(value.issue_refs)
+            graph = replace(
+                graph,
+                fx_snapshot=uow.fx.get(run.fx_snapshot_id)
+                if run.fx_snapshot_id
+                else None,
+                issues=tuple(
+                    i
+                    for r in initial
+                    for i in uow.candidates.issues(r.id)
+                    if i.id in normalization_issues
+                ),
+                transformations=tuple(
+                    t for r in initial for t in uow.candidates.transformations(r.id)
+                ),
+            )
+            summary = classify_graph(graph, registry)
+            for revision in summary.graph.revisions:
+                if revision.revision_number > 1:
+                    uow.candidates.add(revision)
+            initial_issue_ids = {i.id for i in graph.issues}
+            initial_transformation_ids = {t.id for t in graph.transformations}
+            for issue in summary.graph.issues:
+                if issue.id not in initial_issue_ids:
+                    uow.candidates.add_issue(issue)
+            for event in summary.graph.transformations:
+                if event.id not in initial_transformation_ids:
+                    uow.candidates.add_transformation(event)
+            for result in summary.results:
+                uow.classifications.add(result)
+            for dependency in summary.dependencies:
+                uow.classifications.add_dependency(dependency)
+            for duplicate in summary.graph.duplicates:
+                uow.classifications.add_duplicate(duplicate)
+            for link in summary.graph.reobservations:
+                uow.canonicals.add_reobservation(link)
+            for review in summary.reviews:
+                uow.reviews.add(review)
+            uow.runs.complete_classification(
+                run_id, registry.rules_version, summary.counts
+            )
+            if attempt is not None:
+                _stage_event(
+                    uow,
+                    run_id,
+                    "stage_completed",
+                    attempt,
+                    clock,
+                    {
+                        "record_count": len(summary.results),
+                        "counts": summary.counts,
+                        "rules_version": registry.rules_version,
+                    },
+                )
+            uow.commit()
+            return summary
+        except Exception as error:
+            uow.rollback()
+            if attempt is not None:
+                # The assessment transaction rolled back in full. Keep the
+                # normalised recovery boundary and persist only attempt failure.
+                uow.runs.set_state(
+                    run_id, RunState.NORMALISED, stage_failure="classify_failed"
+                )
+                _stage_event(
+                    uow,
+                    run_id,
+                    "stage_failed",
+                    attempt,
+                    clock,
+                    {
+                        "error_type": type(error).__name__,
+                        "message": str(error),
+                    },
+                )
+                uow.commit()
+            raise
+
+
+def _stage_event(
+    uow: UnitOfWork,
+    run_id: UUID,
+    kind: str,
+    attempt: int,
+    clock: Clock,
+    facts: dict[str, object],
+) -> None:
+    uow.events.append(
+        PipelineEvent(
+            deterministic_id(
+                PIPELINE_EVENT_NAMESPACE, run_id, "classify", kind, attempt
             ),
-            transformations=tuple(
-                t for r in initial for t in uow.candidates.transformations(r.id)
-            ),
+            run_id,
+            "classify",
+            kind,
+            {**facts, "attempt_number": attempt},
+            clock.now(),
         )
-        summary = classify_graph(graph, registry)
-        for revision in summary.graph.revisions:
-            if revision.revision_number > 1:
-                uow.candidates.add(revision)
-        initial_issue_ids = {i.id for i in graph.issues}
-        initial_transformation_ids = {t.id for t in graph.transformations}
-        for issue in summary.graph.issues:
-            if issue.id not in initial_issue_ids:
-                uow.candidates.add_issue(issue)
-        for event in summary.graph.transformations:
-            if event.id not in initial_transformation_ids:
-                uow.candidates.add_transformation(event)
-        for result in summary.results:
-            uow.classifications.add(result)
-        for dependency in summary.dependencies:
-            uow.classifications.add_dependency(dependency)
-        for duplicate in summary.graph.duplicates:
-            uow.classifications.add_duplicate(duplicate)
-        for link in summary.graph.reobservations:
-            uow.canonicals.add_reobservation(link)
-        for review in summary.reviews:
-            uow.reviews.add(review)
-        uow.runs.complete_classification(run_id, registry.rules_version, summary.counts)
-        uow.commit()
-        return summary
+    )

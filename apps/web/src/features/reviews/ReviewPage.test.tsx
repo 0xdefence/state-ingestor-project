@@ -14,8 +14,63 @@ import {
   item,
   apiFailure,
 } from "../../test/workflow";
-import { run } from "../../test/fixtures";
+import { run, secondRun } from "../../test/fixtures";
 afterEach(() => vi.unstubAllGlobals());
+for (const scope of ["current", "selected"])
+  test(`${scope} deep link cannot expose decisions for an excluded run`, async () => {
+    fakeWorkflow();
+    await renderWorkflow(
+      `/reviews?scope=${scope}&run_id=${secondRun.id}&review=review-1`,
+    );
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "outside the selected file scope",
+    );
+    expect(
+      screen.queryByRole("button", { name: "Approve" }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Operator name")).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: "Open the matching run" }),
+    ).toHaveAttribute("href", `/runs/${run.id}?review=review-1`);
+  });
+
+test("scope changes and removing the last file pause excluded decisions", async () => {
+  fakeWorkflow();
+  const user = userEvent.setup();
+  await renderWorkflow(
+    `/reviews?scope=current&run_id=${run.id}&review=review-1`,
+  );
+  expect(await screen.findByRole("button", { name: "Approve" })).toBeEnabled();
+  await user.selectOptions(screen.getByLabelText("File scope"), "selected");
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "outside the selected file scope",
+  );
+  expect(
+    screen.queryByRole("button", { name: "Approve" }),
+  ).not.toBeInTheDocument();
+  await user.click(screen.getByText("Choose files"));
+  await user.click(screen.getByRole("checkbox", { name: secondRun.filename }));
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "outside the selected file scope",
+  );
+  await user.click(screen.getByRole("checkbox", { name: run.filename }));
+  expect(await screen.findByRole("button", { name: "Approve" })).toBeEnabled();
+  await user.click(
+    screen.getByRole("button", { name: `Remove ${secondRun.filename}` }),
+  );
+  await user.click(
+    screen.getByRole("button", { name: `Remove ${run.filename}` }),
+  );
+  expect(
+    screen.getByText("Choose files to see records for review."),
+  ).toBeVisible();
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "outside the selected file scope",
+  );
+  expect(
+    screen.queryByRole("button", { name: "Approve" }),
+  ).not.toBeInTheDocument();
+});
 test("queue keyboard selection focuses detail and keeps URL filter context", async () => {
   fakeWorkflow();
   const user = userEvent.setup();
@@ -278,6 +333,9 @@ test("URL filters reach the API and a changed filter preserves the selected reco
       `/api/reviews?scope=selected&run_id=${run.id}&effective_state=approved&verdict=NEEDS_REVIEW`,
     ),
   );
+  await user.selectOptions(screen.getByLabelText("Classification"), "REJECTED");
+  expect(router.state.location.search).toContain("review=review-1");
+  expect(screen.getByRole("button", { name: "Approve" })).toBeEnabled();
 });
 test("an uncertain save retries the identical command key and preserves input", async () => {
   const commands: Record<string, unknown>[] = [];

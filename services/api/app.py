@@ -26,6 +26,7 @@ def create_app(
             for key, env in (
                 ("database_url", "DATABASE_URL"),
                 ("source_root", "SOURCE_ROOT"),
+                ("build_revision", "APPLICATION_BUILD_REVISION"),
             )
             if (value := os.environ.get(env)) is not None
         }

@@ -152,7 +152,7 @@ Classification is a barrier: every data record must have an initial candidate re
 
 Each issue code declares severity, applicability, and whether it has an automatic repair. Validation-only failures have no automatic repair. Field-level normalisation and cross-record classification are labelled separately in provenance and the UI.
 
-`rules_version` is a deterministic content hash of the registry and relevant normalisation configuration. The application build revision is stored separately.
+`rules_version` is a deterministic content hash of the registry and relevant normalisation configuration. The application build revision is stored separately when ingest/reprocess creates the run. Runtime configuration supplies `APPLICATION_BUILD_REVISION`, defaulting to the stable `local-development` identity; retry and exact-file reuse preserve the original value.
 
 ### 3.5 Load and automatic promotion
 
@@ -199,9 +199,13 @@ An exact duplicate has identical parsed raw fields before normalisation, excludi
 
 ## 5. Resumability and failure behavior
 
+The orchestrator acquires database-backed per-run processing ownership before reading run state or checkpoints and holds it for the entire `process_run` command. The PostgreSQL adapter uses a namespaced transaction-scoped advisory lock on a dedicated connection; batch commits use other connections and cannot release it. Context exit rolls back the ownership transaction, while a disconnected or crashed worker loses the lock automatically. A hash collision only serializes unrelated runs. This local runtime connects directly to PostgreSQL and uses one extra connection per active processing command. Waiting commands re-read committed state under ownership. Repository state transitions cannot move backward, and checkpoint replay preserves committed progress and validates record identity.
+
 Parse and normalise use configurable atomic batches. Their writes have deterministic identities, making retries idempotent. A worker resumes after the last committed checkpoint.
 
 Classification restarts for the whole run because it needs the complete candidate set. Results are keyed by candidate revision and rules version, so rerunning it creates no duplicate verdicts or issues.
+
+After verifying the complete-candidate barrier, classification commits a stage attempt event while retaining `normalised` as its durable recovery state. Completion events and factual counts/rules identity commit with the assessment transaction. An assessment failure rolls back all derived writes, then persists a failure event plus `classify_failed` on `normalised` in a separate transaction. Retry retains the earlier attempt history; no transient `classifying` state is persisted. Run-detail stage evidence exposes these events and absolute timestamps.
 
 Canonical loading is atomic. A failed load rolls back all canonical writes from that attempt while leaving frozen sources, raw records, candidate revisions, issues, classifications, and checkpoints available for retry. `classified` with `load_failed` is a valid recoverable state.
 

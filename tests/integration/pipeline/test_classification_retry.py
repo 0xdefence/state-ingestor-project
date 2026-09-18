@@ -98,7 +98,11 @@ def test_classification_failure_after_duplicate_insert_rolls_back_then_retries(
         patch.setattr(SqlAlchemyReviewRepository, "add", fail)
         with pytest.raises(RuntimeError, match="injected"):
             classify_run(run_id, default_registry(), uow_for(engine), FixedClock())
-    assert snapshot(engine) == before
+    expected = {
+        **before,
+        "run": [{**before["run"][0], "stage_failure": "classify_failed"}],
+    }
+    assert snapshot(engine) == expected
     result = classify_run(run_id, default_registry(), uow_for(engine), FixedClock())
     assert result.results[1].verdict == Verdict.DUPLICATE
     after = snapshot(engine)

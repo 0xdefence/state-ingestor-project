@@ -7,6 +7,7 @@ from collections.abc import (
     MutableSequence,
     Sequence,
 )
+from contextlib import nullcontext
 from csv import Error
 from dataclasses import replace
 from datetime import UTC, datetime
@@ -315,6 +316,8 @@ class MemoryEvents:
 
 
 class ParseMemoryUow:
+    processing = SimpleNamespace(hold=lambda _run_id: nullcontext())
+
     def __init__(self, database: ParseMemoryDatabase) -> None:
         self.database = database
         self.sources = MemorySources()

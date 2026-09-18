@@ -7,12 +7,13 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import create_engine
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import ArgumentError, SQLAlchemyError
 from sqlalchemy.orm import Session, sessionmaker
 
+from services.application.ingest import DEFAULT_BUILD_REVISION
 from services.application.ports import Clock, Repositories, SourceStore
 from services.application.process import UnitOfWorkFactory
 from services.application.read_ports import ReadRepository
@@ -46,6 +47,7 @@ class Settings(BaseModel):
 
     database_url: str = DEFAULT_DATABASE_URL
     source_root: Path = Path("var/sources")
+    build_revision: str = Field(default=DEFAULT_BUILD_REVISION, min_length=1)
 
     @field_validator("database_url")
     @classmethod
@@ -85,6 +87,7 @@ class Runtime:
     source_store: SourceStore
     clock: Clock
     read_repository: ReadRepository | None = None
+    build_revision: str = DEFAULT_BUILD_REVISION
 
 
 class RuntimeConfigurationError(Exception):
@@ -135,6 +138,7 @@ def build_runtime(
             FilesystemSourceStore(settings.source_root),
             clock if clock is not None else SystemClock(),
             SqlAlchemyReadRepository(engine),
+            settings.build_revision,
         )
     except SQLAlchemyError as error:
         raise RuntimeConfigurationError(

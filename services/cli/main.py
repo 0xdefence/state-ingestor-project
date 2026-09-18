@@ -9,7 +9,12 @@ from typing import Annotated, cast
 import typer
 from pydantic import ValidationError
 
-from services.application.ingest import IngestFile, IngestResult, ReprocessSource
+from services.application.ingest import (
+    DEFAULT_BUILD_REVISION,
+    IngestFile,
+    IngestResult,
+    ReprocessSource,
+)
 from services.application.ingest import reprocess_source as run_reprocess
 from services.application.process import ProcessRun, RetryRun, RunResult
 from services.application.process import ingest_and_process as run_ingest
@@ -100,11 +105,18 @@ def create_app(runtime_factory: RuntimeFactory = build_runtime) -> typer.Typer:
             str, typer.Option(envvar="DATABASE_URL")
         ] = DEFAULT_DATABASE_URL,
         source_root: Annotated[str, typer.Option(envvar="SOURCE_ROOT")] = "var/sources",
+        build_revision: Annotated[
+            str, typer.Option(envvar="APPLICATION_BUILD_REVISION")
+        ] = DEFAULT_BUILD_REVISION,
     ) -> None:
         """Freeze CSV sources and manage complete processing runs."""
         with operator_errors():
             ctx.obj = Settings.model_validate(
-                {"database_url": database_url, "source_root": source_root}
+                {
+                    "database_url": database_url,
+                    "source_root": source_root,
+                    "build_revision": build_revision,
+                }
             )
 
     @cli.command()
@@ -143,6 +155,7 @@ def create_app(runtime_factory: RuntimeFactory = build_runtime) -> typer.Typer:
                         runtime.clock,
                         process=boundary.process,
                         batch_size=boundary.batch_size,
+                        build_revision=runtime.build_revision,
                     )
                 if boundary.process:
                     processed = run_process(
@@ -212,6 +225,7 @@ def create_app(runtime_factory: RuntimeFactory = build_runtime) -> typer.Typer:
                     ),
                     runtime.uow_factory(),
                     runtime.clock,
+                    build_revision=runtime.build_revision,
                 )
             show_ingest(result, reprocess=True)
             typer.echo("No processing requested.")

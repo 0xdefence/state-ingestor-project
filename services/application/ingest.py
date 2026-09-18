@@ -17,6 +17,8 @@ from services.application.ports import (
 )
 from services.domain.runs import RunState
 
+DEFAULT_BUILD_REVISION = "local-development"
+
 
 @dataclass(frozen=True, slots=True)
 class IngestFile:
@@ -45,7 +47,12 @@ class IngestResult:
 
 
 def ingest_file(
-    command: IngestFile, uow: UnitOfWork, source_store: SourceStore, clock: Clock
+    command: IngestFile,
+    uow: UnitOfWork,
+    source_store: SourceStore,
+    clock: Clock,
+    *,
+    build_revision: str = DEFAULT_BUILD_REVISION,
 ) -> IngestResult:
     frozen = source_store.freeze(command.content)
     with uow:
@@ -83,7 +90,15 @@ def ingest_file(
         run = uow.runs.get_terminal_run(source.id)
         reused = run is not None
         if run is None:
-            run = Run(uuid4(), source.id, None, 0, RunState.INGESTED, now)
+            run = Run(
+                uuid4(),
+                source.id,
+                None,
+                0,
+                RunState.INGESTED,
+                now,
+                build_revision=build_revision,
+            )
             uow.runs.add(run)
         uow.runs.link_occurrence(
             RunSourceOccurrence(
@@ -107,7 +122,11 @@ def ingest_file(
 
 
 def reprocess_source(
-    command: ReprocessSource, uow: UnitOfWork, clock: Clock
+    command: ReprocessSource,
+    uow: UnitOfWork,
+    clock: Clock,
+    *,
+    build_revision: str = DEFAULT_BUILD_REVISION,
 ) -> IngestResult:
     with uow:
         source = uow.sources.get(command.source_file_id)
@@ -126,6 +145,7 @@ def reprocess_source(
             predecessor.reprocess_sequence + 1,
             RunState.INGESTED,
             now,
+            build_revision=build_revision,
         )
         uow.runs.add(successor)
         uow.runs.link_occurrence(

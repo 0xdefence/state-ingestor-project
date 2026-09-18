@@ -207,7 +207,12 @@ class SqlAlchemyRunRepository:
     def complete_classification(
         self, run_id: UUID, rules_version: str, counts: dict[str, int]
     ) -> None:
-        row = self._session.get(RunModel, run_id)
+        row = self._session.scalar(
+            select(RunModel)
+            .where(RunModel.id == run_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
         if row is None:
             raise ResourceNotFoundError(f"Unknown run: {run_id}")
         if row.rules_version is not None and row.rules_version != rules_version:
@@ -218,8 +223,7 @@ class SqlAlchemyRunRepository:
             raise ValueError("Classification counts identity mismatch")
         row.rules_version = rules_version
         row.counts = dict(counts)
-        row.state = RunState.CLASSIFIED
-        row.stage_failure = None
+        self.set_state(run_id, RunState.CLASSIFIED)
 
     def pin_fx_snapshot(self, run_id: UUID, snapshot_id: UUID) -> None:
         row = self._session.scalar(
@@ -232,26 +236,37 @@ class SqlAlchemyRunRepository:
         row.fx_snapshot_id = snapshot_id
 
     def promoted_count(self, run_id: UUID) -> int:
-        return self._session.scalar(
-            select(func.count(CanonicalRevisionModel.id))
-            .join(
-                CandidateRevisionModel,
-                CandidateRevisionModel.id
-                == CanonicalRevisionModel.candidate_revision_id,
+        return (
+            self._session.scalar(
+                select(func.count(CanonicalRevisionModel.id))
+                .join(
+                    CandidateRevisionModel,
+                    CandidateRevisionModel.id
+                    == CanonicalRevisionModel.candidate_revision_id,
+                )
+                .join(
+                    RawRecordModel,
+                    RawRecordModel.id == CandidateRevisionModel.raw_record_id,
+                )
+                .where(RawRecordModel.run_id == run_id)
             )
-            .join(
-                RawRecordModel,
-                RawRecordModel.id == CandidateRevisionModel.raw_record_id,
-            )
-            .where(RawRecordModel.run_id == run_id)
-        ) or 0
+            or 0
+        )
 
     def set_state(
         self, run_id: UUID, state: RunState, *, stage_failure: str | None = None
     ) -> None:
-        row = self._session.get(RunModel, run_id)
+        row = self._session.scalar(
+            select(RunModel)
+            .where(RunModel.id == run_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
         if row is None:
             raise ResourceNotFoundError(f"Unknown run: {run_id}")
+        # Old completion/failure handlers must not undo later committed work.
+        if tuple(RunState).index(RunState(row.state)) > tuple(RunState).index(state):
+            return
         row.state = state
         row.stage_failure = stage_failure
 
@@ -274,6 +289,34 @@ class SqlAlchemyCheckpointRepository:
         )
 
     def advance(self, checkpoint: PipelineCheckpoint) -> None:
+        self._session.execute(
+            select(RunModel.id)
+            .where(RunModel.id == checkpoint.run_id)
+            .with_for_update()
+        ).one()
+        current = self._session.get(
+            PipelineCheckpointModel,
+            (checkpoint.run_id, checkpoint.stage),
+            populate_existing=True,
+        )
+        if current is not None:
+            if (checkpoint.record_ordinal, checkpoint.batch_number) == (
+                current.record_ordinal,
+                current.batch_number,
+            ):
+                if checkpoint.last_record_id != current.last_record_id:
+                    raise ValueError("Checkpoint record identity mismatch")
+                return  # Preserve the first commit's timestamp on exact replay.
+            if (
+                checkpoint.record_ordinal <= current.record_ordinal
+                and checkpoint.batch_number <= current.batch_number
+            ):
+                return  # A delayed worker cannot rewind durable progress.
+            if (
+                checkpoint.record_ordinal <= current.record_ordinal
+                or checkpoint.batch_number <= current.batch_number
+            ):
+                raise ValueError("Checkpoint batch and record must advance together")
         values = asdict(checkpoint)
         self._session.execute(
             insert(PipelineCheckpointModel)

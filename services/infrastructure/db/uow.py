@@ -22,6 +22,7 @@ from services.application.ports import (
     RunRepository,
     SourceRepository,
 )
+from services.infrastructure.db.processing_ownership import PostgresProcessingOwnership
 
 
 class SqlAlchemyUnitOfWork:
@@ -37,6 +38,7 @@ class SqlAlchemyUnitOfWork:
         self._session: Session | None = None
         self._repositories: Repositories | None = None
         self._committed = False
+        self.processing = PostgresProcessingOwnership(session_factory)
 
     @property
     def session(self) -> Session:

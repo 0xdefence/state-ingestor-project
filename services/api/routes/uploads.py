@@ -60,6 +60,7 @@ def upload(
             opened.uow_factory(),
             opened.source_store,
             opened.clock,
+            build_revision=opened.build_revision,
         )
     response.status_code = 200 if result.source_reused else 201
     return present(result)

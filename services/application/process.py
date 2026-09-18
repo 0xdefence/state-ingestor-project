@@ -11,7 +11,12 @@ from typing import TYPE_CHECKING, cast
 from uuid import UUID
 
 from services.application.errors import ApplicationValidationError
-from services.application.ingest import IngestFile, IngestResult, ingest_file
+from services.application.ingest import (
+    DEFAULT_BUILD_REVISION,
+    IngestFile,
+    IngestResult,
+    ingest_file,
+)
 from services.application.ports import (
     Clock,
     PipelineCheckpoint,
@@ -288,9 +293,7 @@ def _persisted_result(
         parse_checkpoint = uow.checkpoints.get(run_id, "parse")
         normalise_checkpoint = uow.checkpoints.get(run_id, "normalise")
         promoted_count = (
-            uow.runs.promoted_count(run_id)
-            if loaded is None
-            else loaded.staged_count
+            uow.runs.promoted_count(run_id) if loaded is None else loaded.staged_count
         )
     parsed = parsed or StageResult(
         run_id, parse_checkpoint.record_ordinal if parse_checkpoint else 0
@@ -314,7 +317,18 @@ def process_run(
     source_store: SourceStore,
     clock: Clock,
 ) -> RunResult:
-    """Dispatch each stage from durable run state until staging completes."""
+    """Own the complete command before reading any durable dispatch state."""
+    with uow_factory().processing.hold(command.run_id):
+        return _process_owned(command, uow_factory, source_store, clock)
+
+
+def _process_owned(
+    command: ProcessRun,
+    uow_factory: UnitOfWorkFactory,
+    source_store: SourceStore,
+    clock: Clock,
+) -> RunResult:
+    """Dispatch stages from fresh state while holding processing ownership."""
     from services.pipeline.normalise.candidates import NormaliseContext
     from services.pipeline.rules.registry import default_registry
 
@@ -400,9 +414,12 @@ def ingest_and_process(
     *,
     process: bool = False,
     batch_size: int = 1000,
+    build_revision: str = DEFAULT_BUILD_REVISION,
 ) -> IngestResult:
     """Compose ingest with explicit processing, reusing the existing run on retry."""
-    result = ingest_file(command, uow_factory(), source_store, clock)
+    result = ingest_file(
+        command, uow_factory(), source_store, clock, build_revision=build_revision
+    )
     if process:
         with uow_factory() as uow:
             run = uow.runs.get(result.run_id)

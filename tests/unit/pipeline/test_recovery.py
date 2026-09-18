@@ -1,5 +1,6 @@
 """LOD-07..09: load recovery over fixed, already-classified evidence."""
 
+from contextlib import nullcontext
 from copy import deepcopy
 from dataclasses import replace
 from types import SimpleNamespace
@@ -56,6 +57,8 @@ class OrchestrationStore:
         owner = self
 
         class Work:
+            processing = SimpleNamespace(hold=lambda _run_id: nullcontext())
+
             def __enter__(self):
                 self.runs = SimpleNamespace(
                     get=lambda _: owner.run,
@@ -104,9 +107,7 @@ def test_process_dispatches_each_stage_until_staged(monkeypatch) -> None:
 
     def classify(*_args, **_kwargs):
         calls.append("classify")
-        store.advance(
-            RunState.CLASSIFIED, counts={"CLEAN": 31, "NEEDS_REVIEW": 17}
-        )
+        store.advance(RunState.CLASSIFIED, counts={"CLEAN": 31, "NEEDS_REVIEW": 17})
         return _classification(store)
 
     def load(*_args, **_kwargs):
@@ -242,9 +243,7 @@ def test_retry_rejects_unsupported_transient_state(
             ),
         )
 
-    with pytest.raises(
-        ValueError, match=f"Run cannot be processed from {state.value}"
-    ):
+    with pytest.raises(ValueError, match=f"Run cannot be processed from {state.value}"):
         process.retry_run(
             RetryRun(store.run_id, 10), store.uow, SimpleNamespace(), FixedClock()
         )

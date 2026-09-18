@@ -1,6 +1,7 @@
 """Dependency-neutral persistence, transaction, source-storage and clock contracts."""
 
 from collections.abc import Sequence
+from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from datetime import date, datetime
 from types import TracebackType
@@ -102,6 +103,16 @@ class Clock(Protocol):
     def now(self) -> datetime: ...
 
 
+class ProcessingOwnership(Protocol):
+    def hold(self, run_id: UUID) -> AbstractContextManager[None]:
+        """Serialize a whole command across its independent stage transactions.
+
+        Ownership is released on exit or loss of the owning database session.
+        Callers must read durable state only after entering this context.
+        """
+        ...
+
+
 class SourceRepository(Protocol):
     def get(self, source_file_id: UUID) -> SourceFile: ...
     def get_or_create(self, source: SourceFile) -> tuple[SourceFile, bool]: ...
@@ -166,6 +177,11 @@ class Repositories:
 
 
 class UnitOfWork(Protocol):
+    @property
+    def processing(self) -> ProcessingOwnership:
+        """Independent command ownership; available outside a stage transaction."""
+        ...
+
     @property
     def decisions(self) -> DecisionRepository: ...
     @property

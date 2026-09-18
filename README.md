@@ -19,6 +19,10 @@ Open <http://127.0.0.1:5173>. The launcher checks ports 8000 and 5173, applies e
 
 Defaults are `DATABASE_URL=postgresql+psycopg://alexis:alexis@127.0.0.1:55432/alexis` and `SOURCE_ROOT=var/sources`. Set these variables before launch to select another local database or source directory. The launcher applies migrations to the selected database. For the default database, migrations can also be applied separately with `.venv/bin/alembic upgrade head`.
 
+Set `APPLICATION_BUILD_REVISION` to a release or commit identity for new runs; the stable local default is `local-development`. API uploads and CLI ingest/reprocess persist it separately from the rules hash. Processing retries, idempotency replay, and exact-file reuse retain the run's original build identity.
+
+Processing commands for the same run wait for PostgreSQL ownership before reading progress. A dedicated connection holds a transaction-scoped advisory lock across all stage commits and releases it on command exit or worker disconnect/crash. Each active command therefore uses one ownership connection in addition to its short-lived stage transaction; run the local API against PostgreSQL directly.
+
 ## Operator flow
 
 1. Select `data/messy_sample_data.csv`, enter an operator name, and choose **Upload and process**. The run page shows **Processed**, evidence, outcome counts, and submission history.

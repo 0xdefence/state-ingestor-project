@@ -157,7 +157,7 @@ export function ReviewPage() {
           )}
         </div>
         {selected ? (
-          <ReviewDetail key={selected} id={selected} />
+          <ReviewDetail key={selected} id={selected} scope={scope} />
         ) : (
           <section className="panel empty-detail">
             <h2>Select a record</h2>
