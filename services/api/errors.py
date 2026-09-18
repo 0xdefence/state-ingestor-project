@@ -10,6 +10,10 @@ from services.application.decisions import (
     IllegalDecisionError,
     StaleDecisionError,
 )
+from services.application.errors import (
+    ApplicationValidationError,
+    ResourceNotFoundError,
+)
 
 
 class UploadTooLargeError(ValueError):
@@ -47,9 +51,9 @@ def register_errors(app: FastAPI) -> None:
             return _response(409, "idempotency_conflict", str(error))
         if isinstance(error, IllegalDecisionError):
             return _response(422, "illegal_decision", str(error))
-        if isinstance(error, LookupError):
+        if isinstance(error, ResourceNotFoundError):
             return _response(404, "not_found", "Requested record was not found")
-        if isinstance(error, ValueError):
+        if isinstance(error, ApplicationValidationError):
             return _response(422, "validation_error", str(error))
         if isinstance(error, HTTPException):
             return _response(
@@ -58,5 +62,14 @@ def register_errors(app: FastAPI) -> None:
         return _response(500, "internal_error", "An unexpected error occurred")
 
     app.add_exception_handler(RequestValidationError, validation)
-    for cls in (ValueError, LookupError, HTTPException, Exception):
+    for cls in (
+        ApplicationValidationError,
+        ResourceNotFoundError,
+        UploadTooLargeError,
+        StaleDecisionError,
+        IdempotencyConflictError,
+        IllegalDecisionError,
+        HTTPException,
+        Exception,
+    ):
         app.add_exception_handler(cls, mapped)

@@ -8,6 +8,7 @@ from fastapi import APIRouter, File, Form, Request, Response, UploadFile
 from services.api.dependencies import RuntimeDependency
 from services.api.errors import UploadTooLargeError
 from services.api.presenters import present
+from services.application.errors import ApplicationValidationError
 from services.application.ingest import IngestFile, ingest_file
 
 router = APIRouter()
@@ -43,7 +44,9 @@ def upload(
     if not operator_name.strip() or (
         idempotency_key is not None and not idempotency_key.strip()
     ):
-        raise ValueError("operator_name and supplied idempotency_key must be nonempty")
+        raise ApplicationValidationError(
+            "operator_name and supplied idempotency_key must be nonempty"
+        )
     limit = cast(int, request.app.state.max_upload_bytes)
     with runtime as opened, BufferedReader(LimitedReader(file.file, limit)) as stream:
         result = ingest_file(

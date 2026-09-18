@@ -111,7 +111,7 @@ def code_label(code: str) -> str:
     return {
         "NEEDS_REVIEW": "Needs attention",
         "AUTO_REPAIRED": "Automatically repaired",
-        "blocked_by_dependency": "Waiting for related records",
+        "blocked_by_dependency": "Waiting for another record",
         "staged": "Processed",
         "pending": "Awaiting review",
     }.get(code, code.replace("_", " ").capitalize())

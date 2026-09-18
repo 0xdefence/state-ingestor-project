@@ -3,6 +3,7 @@
 from dataclasses import dataclass
 from uuid import UUID
 
+from services.application.errors import ApplicationValidationError
 from services.application.ports import Clock, UnitOfWork
 from services.domain.candidates import CandidateRevision
 from services.domain.canonical import (
@@ -14,8 +15,10 @@ from services.domain.canonical import (
 )
 from services.domain.decisions import (
     DecisionOutcome,
+    DecisionValidationError,
     EffectiveReviewState,
     ReviewDecision,
+    legal_outcomes,
     validate_actor,
 )
 from services.domain.ids import new_id
@@ -48,10 +51,13 @@ class DecideReview:
 
     def __post_init__(self) -> None:
         if type(self.expected_sequence) is not int or self.expected_sequence < 0:
-            raise ValueError("expected sequence must be nonnegative")
-        validate_actor(
-            self.outcome, self.operator_name, self.reason, self.idempotency_key
-        )
+            raise ApplicationValidationError("expected sequence must be nonnegative")
+        try:
+            validate_actor(
+                self.outcome, self.operator_name, self.reason, self.idempotency_key
+            )
+        except DecisionValidationError as error:
+            raise ApplicationValidationError(str(error)) from error
 
 
 @dataclass(frozen=True, slots=True)
@@ -215,13 +221,7 @@ def decide_review(
             raise StaleDecisionError(
                 "Candidate or decision history changed; refresh the review"
             )
-        legal = (
-            (DecisionOutcome.APPROVE, DecisionOutcome.REJECT)
-            if classification.verdict is Verdict.NEEDS_REVIEW
-            else (DecisionOutcome.ACKNOWLEDGE, DecisionOutcome.REJECT)
-            if classification.verdict in (Verdict.REJECTED, Verdict.DUPLICATE)
-            else ()
-        )
+        legal = legal_outcomes(classification.verdict)
         if command.outcome not in legal:
             raise IllegalDecisionError(
                 "Outcome is not legal for this classified record"

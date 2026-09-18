@@ -8,6 +8,7 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from services.application.errors import ResourceNotFoundError
 from services.domain.candidates import (
     CandidateRevision,
     CustomerCandidate,
@@ -431,7 +432,9 @@ class SqlAlchemyReviewRepository:
             select(ReviewItemModel)
             .where(ReviewItemModel.id == review_id)
             .with_for_update()
-        ).one()
+        ).one_or_none()
+        if row is None:
+            raise ResourceNotFoundError(f"Unknown review: {review_id}")
         return _review(row)
 
     def add(self, review: ReviewItem) -> None:

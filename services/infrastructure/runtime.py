@@ -10,7 +10,7 @@ from pathlib import Path
 from pydantic import BaseModel, ConfigDict, field_validator
 from sqlalchemy import create_engine
 from sqlalchemy.engine import make_url
-from sqlalchemy.exc import ArgumentError, NoResultFound, SQLAlchemyError
+from sqlalchemy.exc import ArgumentError, SQLAlchemyError
 from sqlalchemy.orm import Session, sessionmaker
 
 from services.application.ports import Clock, Repositories, SourceStore
@@ -136,10 +136,6 @@ def build_runtime(
             clock if clock is not None else SystemClock(),
             SqlAlchemyReadRepository(engine),
         )
-    except NoResultFound as error:
-        raise LookupError(
-            "Requested record was not found; check source, run and occurrence IDs"
-        ) from error
     except SQLAlchemyError as error:
         raise RuntimeConfigurationError(
             "Database operation failed. Check DATABASE_URL, PostgreSQL availability "

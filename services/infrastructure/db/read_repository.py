@@ -13,6 +13,7 @@ from sqlalchemy import select, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
+from services.application.errors import ResourceNotFoundError
 from services.application.queries import (
     AllFilesScope,
     CurrentFileScope,
@@ -36,6 +37,8 @@ from services.application.views import (
     WorkspaceView,
     code_label,
 )
+from services.domain.decisions import legal_outcomes
+from services.domain.issues import Verdict
 from services.infrastructure.db import models as m
 from services.infrastructure.db.decision_repository import SqlAlchemyDecisionRepository
 from services.infrastructure.db.derived_codec import decode
@@ -128,7 +131,7 @@ class SqlAlchemyReadRepository:
             statement = statement.where(m.RunModel.id.in_(ids))
             rows = tuple(session.scalars(statement))
             if {row.id for row in rows} != set(ids):
-                raise LookupError("Requested run was not found")
+                raise ResourceNotFoundError("Requested run was not found")
             return rows
         return tuple(session.scalars(statement))
 
@@ -211,6 +214,13 @@ class SqlAlchemyReadRepository:
         latest = history[-1] if history else None
         state = latest.effective_state if latest else "pending"
         reasons = cast(tuple[object, ...], decode(review.reasons))
+        state_label = (
+            code_label("blocked_by_dependency")
+            if state == "pending"
+            and classification.readiness == "blocked_by_dependency"
+            and not legal_outcomes(Verdict(classification.verdict))
+            else code_label(state)
+        )
         return ReviewRowView(
             review.id,
             review.run_id,
@@ -223,7 +233,7 @@ class SqlAlchemyReadRepository:
             classification.readiness,
             code_label(classification.readiness),
             state,
-            code_label(state),
+            state_label,
             latest.sequence if latest else 0,
             latest.id if latest else None,
             raw.source_line_start,
@@ -306,7 +316,7 @@ class SqlAlchemyReadRepository:
         with self._snapshot() as session:
             review = session.get(m.ReviewItemModel, query.review_item_id)
             if review is None:
-                raise LookupError("Requested review item was not found")
+                raise ResourceNotFoundError("Requested review item was not found")
             classification = session.get_one(
                 m.ClassificationResultModel, review.classification_id
             )
@@ -316,11 +326,7 @@ class SqlAlchemyReadRepository:
             raw = session.get_one(m.RawRecordModel, review.raw_record_id)
             item = self._review_row(session, review, classification, candidate, raw)
             history = SqlAlchemyDecisionRepository(session).for_review(review.id)
-            allowed = (
-                ("reject", "acknowledge")
-                if classification.verdict in ("REJECTED", "DUPLICATE")
-                else ("approve", "reject")
-            )
+            allowed = legal_outcomes(Verdict(classification.verdict))
             if history:
                 allowed = tuple(
                     outcome for outcome in allowed if outcome != history[-1].outcome

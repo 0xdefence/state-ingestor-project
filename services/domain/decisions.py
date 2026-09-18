@@ -5,11 +5,22 @@ from datetime import datetime
 from enum import StrEnum
 from uuid import UUID
 
+from services.domain.issues import Verdict
+
 
 class DecisionOutcome(StrEnum):
     APPROVE = "approve"
     REJECT = "reject"
     ACKNOWLEDGE = "acknowledge"
+
+
+def legal_outcomes(verdict: Verdict) -> tuple[DecisionOutcome, ...]:
+    """Manual decisions are available only for the explicitly governed verdicts."""
+    if verdict is Verdict.NEEDS_REVIEW:
+        return (DecisionOutcome.APPROVE, DecisionOutcome.REJECT)
+    if verdict in (Verdict.REJECTED, Verdict.DUPLICATE):
+        return (DecisionOutcome.ACKNOWLEDGE, DecisionOutcome.REJECT)
+    return ()
 
 
 class EffectiveReviewState(StrEnum):
@@ -19,6 +30,10 @@ class EffectiveReviewState(StrEnum):
     ACKNOWLEDGED = "acknowledged"
 
 
+class DecisionValidationError(ValueError):
+    """Invalid decision actor/reason/key, independent of stored invariants."""
+
+
 def validate_actor(
     outcome: DecisionOutcome,
     operator_name: str,
@@ -26,9 +41,9 @@ def validate_actor(
     idempotency_key: str,
 ) -> None:
     if not operator_name.strip() or not idempotency_key.strip():
-        raise ValueError("operator and idempotency key must be nonempty")
+        raise DecisionValidationError("operator and idempotency key must be nonempty")
     if outcome is DecisionOutcome.REJECT and not (reason and reason.strip()):
-        raise ValueError("rejection requires a reason")
+        raise DecisionValidationError("rejection requires a reason")
 
 
 @dataclass(frozen=True, slots=True)

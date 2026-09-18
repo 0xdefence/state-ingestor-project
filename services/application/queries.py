@@ -3,6 +3,7 @@
 from dataclasses import dataclass
 from uuid import UUID
 
+from services.application.errors import ApplicationValidationError
 from services.domain.decisions import EffectiveReviewState
 from services.domain.issues import Verdict
 
@@ -18,7 +19,7 @@ class SelectedFilesScope:
 
     def __post_init__(self) -> None:
         if not self.run_ids:
-            raise ValueError("selected scope requires at least one run")
+            raise ApplicationValidationError("selected scope requires at least one run")
         object.__setattr__(self, "run_ids", tuple(dict.fromkeys(self.run_ids)))
 
 

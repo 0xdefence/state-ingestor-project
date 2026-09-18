@@ -7,6 +7,7 @@ from uuid import UUID
 
 from fastapi import Depends, Query, Request
 
+from services.application.errors import ApplicationValidationError
 from services.application.queries import (
     AllFilesScope,
     CurrentFileScope,
@@ -54,12 +55,14 @@ def file_scope(
     ids = tuple(run_id or ())
     if scope == "current":
         if len(ids) != 1:
-            raise ValueError("current scope requires exactly one run_id")
+            raise ApplicationValidationError(
+                "current scope requires exactly one run_id"
+            )
         return CurrentFileScope(ids[0])
     if scope == "selected":
         return SelectedFilesScope(ids)
     if ids:
-        raise ValueError("all scope does not accept run_id")
+        raise ApplicationValidationError("all scope does not accept run_id")
     return AllFilesScope()
 
 

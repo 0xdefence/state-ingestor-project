@@ -10,6 +10,7 @@ from itertools import islice
 from typing import TYPE_CHECKING, cast
 from uuid import UUID
 
+from services.application.errors import ApplicationValidationError
 from services.application.ingest import IngestFile, IngestResult, ingest_file
 from services.application.ports import (
     Clock,
@@ -361,9 +362,13 @@ def process_run(
                 loaded=loaded,
             )
         elif run.state in (RunState.CLASSIFYING, RunState.LOADING):
-            raise ValueError(f"Run cannot be processed from {run.state}")
+            raise ApplicationValidationError(
+                f"Run cannot be processed from {run.state}"
+            )
         else:
-            raise ValueError(f"Run cannot be processed from {run.state}")
+            raise ApplicationValidationError(
+                f"Run cannot be processed from {run.state}"
+            )
 
 
 def retry_run(

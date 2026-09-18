@@ -10,6 +10,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
+from services.application.errors import ResourceNotFoundError
 from services.application.ports import (
     PipelineCheckpoint,
     PipelineEvent,
@@ -72,7 +73,7 @@ class SqlAlchemySourceRepository:
     def get(self, source_file_id: UUID) -> SourceFile:
         row = self._session.get(SourceFileModel, source_file_id)
         if row is None:
-            raise LookupError(f"Unknown source: {source_file_id}")
+            raise ResourceNotFoundError(f"Unknown source: {source_file_id}")
         return _source(row)
 
     def get_or_create(self, source: SourceFile) -> tuple[SourceFile, bool]:
@@ -132,7 +133,7 @@ class SqlAlchemyRunRepository:
     def get(self, run_id: UUID) -> Run:
         row = self._session.get(RunModel, run_id)
         if row is None:
-            raise LookupError(f"Unknown run: {run_id}")
+            raise ResourceNotFoundError(f"Unknown run: {run_id}")
         return _run(row)
 
     def get_terminal_run(self, source_file_id: UUID) -> Run | None:
@@ -191,7 +192,9 @@ class SqlAlchemyRunRepository:
             .where(RunSourceOccurrenceModel.source_occurrence_id == occurrence_id)
             .order_by(RunModel.reprocess_sequence)
             .limit(1)
-        ).one()
+        ).one_or_none()
+        if row is None:
+            raise ResourceNotFoundError("Requested source occurrence was not found")
         return _run(row)
 
     def add(self, run: Run) -> None:
@@ -206,7 +209,7 @@ class SqlAlchemyRunRepository:
     ) -> None:
         row = self._session.get(RunModel, run_id)
         if row is None:
-            raise LookupError(f"Unknown run: {run_id}")
+            raise ResourceNotFoundError(f"Unknown run: {run_id}")
         if row.rules_version is not None and row.rules_version != rules_version:
             raise ValueError(
                 "Classification rules identity mismatch; reprocess required"
@@ -223,7 +226,7 @@ class SqlAlchemyRunRepository:
             select(RunModel).where(RunModel.id == run_id).with_for_update()
         )
         if row is None:
-            raise LookupError(f"Unknown run: {run_id}")
+            raise ResourceNotFoundError(f"Unknown run: {run_id}")
         if row.fx_snapshot_id is not None and row.fx_snapshot_id != snapshot_id:
             raise ValueError("Run FX snapshot is already pinned")
         row.fx_snapshot_id = snapshot_id
@@ -248,7 +251,7 @@ class SqlAlchemyRunRepository:
     ) -> None:
         row = self._session.get(RunModel, run_id)
         if row is None:
-            raise LookupError(f"Unknown run: {run_id}")
+            raise ResourceNotFoundError(f"Unknown run: {run_id}")
         row.state = state
         row.stage_failure = stage_failure
 
