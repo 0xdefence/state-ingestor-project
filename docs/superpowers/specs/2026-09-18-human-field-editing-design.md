@@ -65,15 +65,24 @@ One migration, `0006_human_edits`, adds or changes the following. All new tables
 | `note` | text null | operator free text, trimmed, at most 2,000 characters |
 | `field_changes` | JSONB array | `[{field_path, input_text, absent, before, after}]`, sorted by `field_path`; `before` and `after` are encoded `CandidateField`s |
 | `citations` | JSONB array | `[{check_id, field_path, accepted_value}]`; nonempty if and only if `reason = business_rule_updated` |
-| `dismissals` | JSONB array | `[descriptor]` (§7.6); nonempty if and only if `reason = graph_wrong` |
+| `dismissals` | JSONB array | `[descriptor]` (§7.6); allowed only when `reason = graph_wrong` |
 | `rules_version` | text | the registry version used for the re-check |
 | `operator_name` | text | validated like decision operators |
 | `edited_at` | timestamptz | from the server clock, never from the client |
 | `idempotency_key` | text | unique |
+| `request_fingerprint` | char(64) | SHA-256 of the submitted command without its idempotency key. Replays compare this, because `field_changes` keeps only fields that actually changed. |
 | `content_hash` | char(64) | §6.3 |
 | `parent_hash` | char(64) null | the previous edit's `content_hash`; null only when `edit_number = 1` |
 
-Check constraints enforce the reason/citation/dismissal pairing, `parent_hash IS NULL` ⇔ `edit_number = 1`, and `data_wrong` ⇒ `jsonb_array_length(field_changes) ≥ 1`.
+Check constraints enforce the reason pairing and `parent_hash IS NULL` ⇔ `edit_number = 1`. The pairing rules are:
+
+| Reason | Field changes | Citations | Dismissals |
+|---|---|---|---|
+| `data_wrong` | at least 1 | none | none |
+| `business_rule_updated` | any number | at least 1 | none |
+| `graph_wrong` | any number | none | any number, but field changes + dismissals ≥ 1 |
+
+Re-pointing a link by editing a reference field alone is a valid `graph_wrong` edit.
 
 ### 4.2 `candidate_revision`
 
@@ -89,15 +98,25 @@ This table needs no schema change: the existing `ck_candidate_parent` already al
 | `sequence` | ≥ 1, part of primary key |
 | `classification_id` | FK `classification_result.id`, unique |
 | `human_edit_id` | FK `human_edit.id`, unique, null only for `sequence = 1` |
+| `reasons` | JSONB array of `ReviewReason`; the assessment's current reasons, which may be empty after an edit |
 | `created_at` | timestamptz |
 
-The migration backfills `(review_item.id, 1, review_item.classification_id, NULL, review_item.created_at)` for every existing review item. `review_item.classification_id` is kept and still means "the assessment that opened the item". Everything that needs the current classification reads the latest assessment.
+The migration backfills `(review_item.id, 1, review_item.classification_id, NULL, review_item.reasons, review_item.created_at)` for every existing review item. From then on, classification writes assessment 1 whenever it creates a review item, idempotently like its other writes. The queue and review detail read reasons from the current assessment. `review_item.classification_id` is kept and still means "the assessment that opened the item". Everything that needs the current classification reads the latest assessment.
 
 ### 4.4 `data_quality_issue.check_id`
 
 This is a new nullable text column holding the catalogue id (§5) of the check that raised the issue. Normaliser parse issues keep `NULL`, and a `NULL` check id can never be waived.
 
-The migration backfills existing rows from `(code, field_path)` using the §5 mapping. `INVALID_INTEGER` on `order.quantity` maps to `limit.order_quantity_nonzero` only when its summary is `Order quantity must be non-zero.` Otherwise it stays `NULL`.
+The migration backfills existing rows from `(code, field_path)` using the §5 mapping. Four codes are raised by both the normalisers and the rules, so they map only when the summary is the rule's:
+
+| Code | Maps when summary | To |
+|---|---|---|
+| `INVALID_INTEGER` | `= 'Order quantity must be non-zero.'` | `limit.order_quantity_nonzero` |
+| `INVALID_DATE` | `= 'Expected a date without a time component.'` | `format.date_only` |
+| `INVALID_STATUS` | `LIKE '%is outside the registered domain.'` | `vocab.<entity>_status` |
+| `MISSING_REQUIRED_VALUE` | `LIKE 'Required field is %'` | `limit.required_field` |
+
+Otherwise these codes stay `NULL`, which is correct for normaliser issues.
 
 ### 4.5 `edit_attempt_failure`
 
@@ -135,6 +154,8 @@ Every validation check and interpretation policy gets a stable id. Issues raised
 | `interpret.line_total_repair` | interpretation | `order.unit_price` | none | citation only |
 | `interpret.fx_rate_date` | interpretation | GBP-converted money fields | none | citation only |
 
+**Status vocabularies.** The status normaliser is itself a closed list: an unknown status fails parsing as `UNRESOLVED` with a normaliser `INVALID_STATUS`, before the vocabulary check runs. So when an edit cites `vocab.<entity>_status` with `accepted_value = X` and the operator enters exactly `X` (after trimming) in that status field, the edit parser records `KNOWN X` instead of calling the status normaliser. The rule's vocabulary check then raises its `INVALID_STATUS` for `X`, and the same citation waives it. Categories and tags already parse freely and are checked only by the rules.
+
 The catalogue exposes, for each entity type, its applicable checks and fields. A citation is valid only if its `check_id` applies to the record's entity type and its `field_path` is one of that check's fields. A vocabulary citation must carry `accepted_value`, and every other kind must not.
 
 ## 6. Appending an edit
@@ -166,7 +187,7 @@ One transaction, in this order. Any failure rolls back every write.
    - the current effective state is `pending` or `rejected`;
    - no canonical revision is current for this record's own candidate chain.
 
-   Otherwise raise `edit_not_editable`, with a reason code of `approved`, `acknowledged`, or `typeless`.
+   Otherwise raise `edit_not_editable`, with a reason code of `approved`, `acknowledged`, `typeless`, or `promoted` (a canonical revision from this record's chain is current, for example after an automatic cascade promotion).
 4. **Staleness.** `expected_candidate_revision_id` must equal the terminal version. Otherwise raise `edit_stale`, with the current revision id and edit number.
 5. **Validate input.**
    - Every `field_path` must be an editable field of the entity: payload fields excluding `entity_type`, `*_annotation`, `name_match_key`, `customer_match_key`, and `*_gbp`. Otherwise raise `edit_field_not_editable`.
@@ -232,15 +253,24 @@ Interpretation citations never drop anything. They are stored and displayed. Iss
 
 ### 7.6 Reason: graph wrong
 
-Dismissal descriptors are stable across versions, because they reference raw records, runs, and canonical identities rather than issue ids:
+Dismissal descriptors have one shape, `{kind, counterpart_id, detail}`. They are stable across versions, because they reference raw records and canonical identities rather than issue ids:
 
-| Finding | Descriptor | Effect when dismissed |
-|---|---|---|
-| Same-run exact duplicate | `{kind: "duplicate", earlier_raw_record_id}` | The relation no longer makes this record `DUPLICATE`. The relation row itself is kept. |
-| Business-ID conflict | `{kind: "conflict", scope: "same_run" \| "earlier_run", counterpart_id}` | The `BUSINESS_KEY_CONFLICT` issue for that counterpart is dropped. |
-| Resolved dependency match | `{kind: "dependency_match", dependency: "customer" \| "product" \| "referral", target_raw_record_id}` | That target is excluded. The dependency becomes `UNRESOLVED` (or resolves to a different unique match), which can only block, never unblock. |
+| Finding | `kind` | `counterpart_id` | `detail` | Effect when dismissed |
+|---|---|---|---|---|
+| Same-run exact duplicate | `duplicate` | earlier raw record id | null | The relation no longer makes this record `DUPLICATE`. The relation row itself is kept. |
+| Business-ID conflict | `conflict` | the other raw record id (same run), or the canonical identity id (earlier run) | `same_run` \| `earlier_run` | The `BUSINESS_KEY_CONFLICT` issue naming that counterpart is dropped. |
+| Resolved dependency match | `dependency_match` | the matched target's raw record id | `customer` \| `product` \| `referral` | The dependency becomes `UNRESOLVED` with no target, which can only block, never unblock. |
 
 Unresolved or ambiguous dependencies can't be dismissed. The fix is to edit the reference field.
+
+### 7.8 Business-ID conflicts in both directions
+
+The comparison rule flags only the **later** of two same-run records sharing a business ID. An edit can give a record the ID of a record that comes *after* it, and that later record is never re-assessed. So the re-check also raises `BUSINESS_KEY_CONFLICT` (check id `NULL`, severity warning) on the edited record when:
+- any other data record in the run has the same business key;
+- its terminal payload differs in typed values; and
+- the rule didn't already raise a conflict naming that record.
+
+It's dismissible like any other conflict.
 
 ### 7.7 Verdict and result
 
@@ -254,6 +284,8 @@ Re-observation: if the edited values exactly equal an earlier run's current cano
 - **Legal outcomes** become `legal_outcomes(verdict, edited: bool)`, where `edited` means the current assessment has a non-null `human_edit_id`. When `edited` is true, `CLEAN`, `AUTO_REPAIRED`, and `NEEDS_REVIEW` allow approve/reject, and `DUPLICATE` allows acknowledge/reject. Unedited behaviour is unchanged.
 - `decide_review` reads the classification from the current assessment. Its existing staleness check against the terminal version rejects decisions made on a superseded version. "A superseding decision must change the outcome" applies only when the previous decision was on the same candidate revision.
 - Approval promotes the terminal version and runs the existing dependant cascade.
+- Dependency readiness follows the target **record's** current terminal version, not the version recorded at classification. Otherwise, approving an edited customer would leave the orders that reference it blocked forever, because they point at the customer's pre-edit version. Unedited records are unaffected, since their terminal version is the recorded one.
+- The cascade never auto-promotes a record that has any `human_edit`. An edited record reaches canonical data only through its own approval, even when its re-check came back clean and its dependency has just been approved.
 - Queue and workspace attention counts use the new effective-state rule. The run's `counts` snapshot is unchanged.
 
 ## 9. API and errors
@@ -266,7 +298,7 @@ Re-observation: if the edited values exactly equal an earlier run's current cano
 | `POST /api/reviews/{id}/edits/preview` | Runs §6.2 steps 3 to 9 in a transaction that is always rolled back. Returns parsed values, remaining issues, and the predicted verdict and readiness. Writes nothing, including failure rows. |
 | `POST /api/reviews/{id}/edits` | Runs §6.2. Returns the edit, versions, and new assessment: `201` for a new edit, `200` for an idempotent replay (the convention `POST /api/uploads` uses). |
 
-Review detail gains `edits` (newest first, each with `overridden_by_edit_number`), `assessment_sequence`, edit-aware legal actions, and `human_edit` evidence nodes linked from field provenance. Run detail and queue rows gain `edit_count`. The decision endpoint is unchanged.
+Review detail gains `editable` and `not_editable_reason`, `edits` (newest first, each with `overridden_by_edit_number`), `latest_edit_failure`, `assessment_sequence`, edit-aware legal actions, and `human_edit` evidence nodes linked from field provenance. Run detail and queue rows gain `edit_count`. The decision endpoint is unchanged.
 
 ### 9.2 Error codes
 
@@ -341,7 +373,7 @@ File: `tests/unit/edits/test_append.py`, `test_hash.py`, `test_recheck.py`, `tes
 | `EDT-01 test_edit_appends_next_revision_without_touching_parent` | Given an order with chain 1 `normalise` → 2 `SKU_ZERO_PADDING` → 3 `FX_BINDING` and a known unit price, a `data_wrong` edit setting `order.quantity` to `"3"` creates revision 4 (`origin = HUMAN_EDIT`, parent = revision 3, `quantity = KNOWN 3`, `unit_price_gbp = ABSENT`) with exactly one `HUMAN_EDIT` transformation (before `KNOWN 2`, after `KNOWN 3`, sequence = previous max + 1). It also creates revision 5 (`FX_BINDING`, parent = revision 4), which is terminal. Revisions 1 to 3 compare equal to their pre-edit snapshots. |
 | `EDT-02 test_input_uses_csv_normalisers` | Parameter cases on the matching fields produce exactly the CSV results: `"$1,240.50"` → `KNOWN Money(1240.50, USD)`; `"03/04/2023"` → `KNOWN 2023-03-04`; `"TBD"` → `DEFERRED`; `{absent: true}` → `ABSENT`; `"many"` on `order.quantity` → `UNRESOLVED` with one `INVALID_INTEGER` issue whose `check_id` is `NULL`. None of them raise. |
 | `EDT-03 test_non_editable_fields_are_refused` | `order.customer_match_key`, `order.unit_price_gbp`, `order.entity_type`, and `order.nonexistent` each raise `edit_field_not_editable` naming that path, and no rows are written. |
-| `EDT-04 test_reason_pairing_is_enforced` | `data_wrong` with a citation, `business_rule_updated` without citations, `graph_wrong` without dismissals, and `graph_wrong` with a citation each raise `edit_reason_mismatch`. `data_wrong` with no field changes raises it too. `business_rule_updated` with a citation and no field changes is accepted. |
+| `EDT-04 test_reason_pairing_is_enforced` | Each of these raises `edit_reason_mismatch`: `data_wrong` with a citation; `data_wrong` with no field changes; `business_rule_updated` without citations; `business_rule_updated` with a dismissal; `graph_wrong` with a citation; `graph_wrong` with neither field changes nor dismissals. `business_rule_updated` with a citation and no field changes is accepted, and so is `graph_wrong` with one field change and no dismissals. |
 | `EDT-05 test_no_change_is_refused` | Re-submitting `"19.99"` for a field whose current value is `KNOWN Money(19.99, GBP)` with the same citations and dismissals raises `edit_no_change`. Changing only a citation is accepted. |
 | `EDT-06 test_hash_is_deterministic_and_chained` | The same inputs produce the same 64-character hash. Changing any one of note, operator, `edited_at` (by 1 µs), a citation, or one field value each changes it. Edit 2's `parent_hash` equals edit 1's `content_hash`, and edit 1's `parent_hash` is null. |
 | `EDT-07 test_hash_chain_verification_detects_tampering` | For three edits, verification passes. After mutating edit 2's stored note in the test store, verification reports first mismatch = edit 2 and does not report edit 1. |
@@ -361,6 +393,8 @@ File: `tests/unit/edits/test_append.py`, `test_hash.py`, `test_recheck.py`, `tes
 | `EDT-21 test_repointing_by_reference_edit` | Editing `order.customer_name_raw` from `"S. Rossi"` (unresolved) to `"Sofia Rossi"` resolves the customer dependency to the record whose match key is `sofia rossi`. Readiness follows that target's stored readiness. |
 | `EDT-22 test_context_readiness_comes_from_stored_assessments` | If the target customer's stored assessment is `NEEDS_REVIEW`, the edited order is `blocked_by_dependency` even though a fresh recomputation of the customer would be clean. |
 | `EDT-23 test_effective_state_resets_after_edit` | A record rejected on revision 1 is `pending` after an edit. `legal_outcomes(CLEAN, edited=True)` = (approve, reject), and `legal_outcomes(CLEAN, edited=False)` = (). |
+| `EDT-25 test_status_vocabulary_citation_accepts_new_status` | For a product, entering `on_hold` in `product.status` with reason `data_wrong` gives `UNRESOLVED` and a normaliser `INVALID_STATUS` (check id `NULL`). With `business_rule_updated` citing `vocab.product_status` accepting `on_hold`, it gives `KNOWN "on_hold"` and no remaining `INVALID_STATUS`. Entering `paused` with that same citation still gives `UNRESOLVED`. |
+| `EDT-26 test_edit_detects_conflict_with_later_record` | Records A (line 2, `CUST-1001`) and B (line 3, `CUST-1002`) are both clean. Editing A's `customer_id` to `CUST-1002` with other values differing from B raises `BUSINESS_KEY_CONFLICT` on A naming B's raw record. With identical typed values, no conflict is raised. |
 | `EDT-24 test_rejecting_again_after_edit_is_legal` | After reject (revision 1) → edit → reject (revision 2), the second rejection is accepted. On one revision, reject → reject still raises `IllegalDecisionError`. |
 
 ### 11.2 Persistence and concurrency (PostgreSQL integration)
@@ -380,6 +414,7 @@ File: `tests/integration/edits/test_edits_postgres.py`, `test_edit_migration.py`
 | `EDT-38 test_each_worker_failure_rolls_back_and_records` | Injected failures in parse, re-check, and persist each return their code with a UUID `reference` and write zero edit, revision, issue, classification, or assessment rows. Exactly one `edit_attempt_failure` row with that reference and stage is written. |
 | `EDT-39 test_preview_writes_nothing` | A preview returns the same verdict and issues a subsequent append produces, and row counts for every table are unchanged after preview, including on failure. |
 | `EDT-40 test_migration_backfills_assessments_and_check_ids` | After upgrading a database processed at `0005`, every review item has exactly one assessment (sequence 1, `human_edit_id NULL`). Domain issues have the mapped `check_id`. A parse `INVALID_INTEGER` stays `NULL` while the non-zero-quantity one maps to `limit.order_quantity_nonzero`. Downgrade restores `0005`. |
+| `EDT-41 test_cascade_never_promotes_edited_record` | Given an order that was edited, re-checked `CLEAN`, and `blocked_by_dependency` on an unapproved customer, approving the customer promotes the customer only. The order has no canonical revision and stays `pending`. Approving the order then promotes it. |
 | `ERR-01 test_processing_failures_return_stage_codes` | An injected failure in each of parse, normalise, classify, and load returns `processing_{stage}_failed` with `run_id` and a `reference`, and the run's persisted `stage_failure` is unchanged from today's behaviour. |
 | `ERR-02 test_database_unavailable` | With the database connection refused, the API returns `503 database_unavailable` with a reference and no driver text in the body. |
 
@@ -401,7 +436,7 @@ File: `apps/web/src/features/edits/EditDialog.test.tsx`, `EditHistory.test.tsx`
 
 | ID and test name | Required assertion |
 |---|---|
-| `UI-19 edit_dialog_reason_changes_sections` | Choosing "Business rule updated" shows the checks list and hides findings. "Record links are wrong" shows findings and hides checks. "Data is wrong" shows neither. Append is disabled until the reason's requirement is met. |
+| `UI-19 edit_dialog_reason_changes_sections` | Choosing "Business rule updated" shows the checks list and hides findings. "Record links are wrong" shows findings and hides checks. "Data is wrong" shows neither. Append stays disabled until the reason's pairing rule (§4.1) is met: one changed field; one checked rule; or one changed field or checked finding. |
 | `UI-20 edit_dialog_shows_source_current_and_preview` | Each row shows exact source text and current value. Typing `03/04/2023` shows "4 March 2023" after the debounced preview, and the row is labelled "Changed". |
 | `UI-21 edit_dialog_keyboard_and_focus` | Opening moves focus into the dialog, Tab stays inside it, Escape with changes asks for confirmation, and closing returns focus to the opener. The flow completes by keyboard alone. |
 | `UI-22 edit_dialog_error_states` | `edit_stale` keeps typed values and shows the refresh explanation. `edit_recheck_failed` shows code and reference plus **Retry append**, and the retry reuses the same idempotency key. `edit_not_editable` renders its specific message. |
