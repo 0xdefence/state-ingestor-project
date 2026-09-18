@@ -385,3 +385,77 @@ def test_workspace_includes_factual_identifiers_and_completion_instants(app, eng
             assert queue["items"] == result["review_items"]
 
     asyncio.run(scenario())
+
+
+def test_run_lists_every_raw_record_with_one_linked_evidence_graph(app):
+    async def scenario():
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            uploaded = await client.post(
+                "/api/uploads",
+                files={
+                    "file": (
+                        "sample.csv",
+                        Path("data/messy_sample_data.csv").read_bytes(),
+                    )
+                },
+                data={"operator_name": "Alex"},
+            )
+            run_id = uploaded.json()["run_id"]
+            initial = (await client.get(f"/api/runs/{run_id}")).json()
+            assert initial["records"] == []
+            assert initial["evidence"]["nodes"] == []
+            await client.post(f"/api/runs/{run_id}/process")
+            result = (await client.get(f"/api/runs/{run_id}")).json()
+            records = result["records"]
+            assert len(records) == 52
+            assert sum(row["kind"] == "data" for row in records) == 48
+            assert [r["source_line_start"] for r in records] == sorted(
+                r["source_line_start"] for r in records
+            )
+            nodes = result["evidence"]["nodes"]
+            keys = {(n["kind"], n["id"]) for n in nodes}
+            assert len(keys) == len(nodes)
+            assert all(("raw_record", row["id"]) in keys for row in records)
+            assert any(
+                r["verdict"] == "CLEAN" and r["review_item_id"] is None for r in records
+            )
+            assert all("payload" not in r and "fields" not in r for r in records)
+            for row in records:
+                if row["candidate_revision_id"]:
+                    assert ("candidate_revision", row["candidate_revision_id"]) in keys
+                if row["review_item_id"]:
+                    assert ("review_item", row["review_item_id"]) in keys
+            assert {
+                "canonical_revision",
+                "canonical_promotion_event",
+                "dependency_record",
+                "transformation_event",
+                "data_quality_issue",
+            } <= {n["kind"] for n in nodes}
+            queue = (
+                await client.get(
+                    "/api/reviews", params={"scope": "current", "run_id": run_id}
+                )
+            ).json()
+            item = next(i for i in queue["items"] if i["verdict"] == "NEEDS_REVIEW")
+            await client.post(
+                f"/api/reviews/{item['id']}/decisions",
+                json={
+                    "candidate_revision_id": item["candidate_revision_id"],
+                    "expected_sequence": 0,
+                    "outcome": "reject",
+                    "operator_name": "Alex",
+                    "reason": "Checked source",
+                    "idempotency_key": "run-history",
+                },
+            )
+            refreshed = (await client.get(f"/api/runs/{run_id}")).json()
+            assert any(
+                n["kind"] == "review_decision"
+                and n["attributes"]["reason"] == "Checked source"
+                for n in refreshed["evidence"]["nodes"]
+            )
+
+    asyncio.run(scenario())

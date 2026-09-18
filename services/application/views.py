@@ -88,6 +88,8 @@ class RunDetailView:
     occurrences: tuple[ObjectView, ...]
     checkpoints: tuple[ObjectView, ...]
     events: tuple[ObjectView, ...]
+    records: tuple[ObjectView, ...]
+    evidence: EvidenceView
 
 
 @dataclass(frozen=True, slots=True)

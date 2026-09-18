@@ -89,7 +89,70 @@ export interface ProcessResult {
 }
 export interface RunDetail {
   run: RunView;
-  checkpoints: Record<string, unknown>[];
-  events: Record<string, unknown>[];
-  occurrences: Record<string, unknown>[];
+  checkpoints: Record<string, EvidenceValue>[];
+  events: Record<string, EvidenceValue>[];
+  occurrences: Record<string, EvidenceValue>[];
+  records: RunRecord[];
+  evidence: EvidenceView;
+}
+
+export type EvidenceValue =
+  | null
+  | string
+  | number
+  | boolean
+  | EvidenceValue[]
+  | { [key: string]: EvidenceValue };
+export interface EvidenceNode {
+  kind: string;
+  id: string;
+  attributes: Record<string, EvidenceValue>;
+}
+export interface EvidenceView {
+  nodes: EvidenceNode[];
+}
+export interface RunRecord {
+  id: string;
+  kind: string;
+  source_line_start: number;
+  source_line_end: number;
+  candidate_revision_id: string | null;
+  classification_id: string | null;
+  business_identifier: string | null;
+  verdict: Verdict | null;
+  review_item_id: string | null;
+}
+export type DecisionOutcome = "approve" | "reject" | "acknowledge";
+export interface Decision {
+  id: string;
+  review_item_id: string;
+  candidate_revision_id: string;
+  sequence: number;
+  outcome: DecisionOutcome;
+  operator_name: string;
+  reason: string | null;
+  idempotency_key: string;
+  supersedes_decision_id: string | null;
+  decided_at: AbsoluteInstant;
+}
+export interface ReviewDetailView {
+  item: ReviewRow;
+  evidence: EvidenceView;
+  decisions: { decision: Decision; outcome_label: string }[];
+  allowed_outcomes: DecisionOutcome[];
+}
+export interface DecisionCommand {
+  candidate_revision_id: string;
+  expected_sequence: number;
+  outcome: DecisionOutcome;
+  operator_name: string;
+  reason: string | null;
+  idempotency_key: string;
+  supersedes_decision_id: string | null;
+}
+export interface DecisionResult {
+  decision: Decision;
+  effective_state: string;
+  replayed: boolean;
+  canonical_revision: { id: string; revision_number: number } | null;
 }

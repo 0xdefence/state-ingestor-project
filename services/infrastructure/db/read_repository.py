@@ -327,8 +327,70 @@ class SqlAlchemyReadRepository:
                     .order_by(m.PipelineEventModel.occurred_at, m.PipelineEventModel.id)
                 )
             )
+            raw_records = tuple(
+                session.scalars(
+                    select(m.RawRecordModel)
+                    .where(m.RawRecordModel.run_id == run.id)
+                    .order_by(m.RawRecordModel.source_line_start, m.RawRecordModel.id)
+                )
+            )
+            evidence = self._evidence(session, *raw_records)
+            records: list[ObjectView] = []
+            for raw in raw_records:
+                candidate = session.scalar(
+                    select(m.CandidateRevisionModel)
+                    .where(m.CandidateRevisionModel.raw_record_id == raw.id)
+                    .order_by(m.CandidateRevisionModel.revision_number.desc())
+                    .limit(1)
+                )
+                classification = (
+                    session.scalar(
+                        select(m.ClassificationResultModel)
+                        .where(
+                            m.ClassificationResultModel.candidate_revision_id
+                            == candidate.id
+                        )
+                        .order_by(m.ClassificationResultModel.evaluated_at.desc())
+                        .limit(1)
+                    )
+                    if candidate
+                    else None
+                )
+                review = session.scalar(
+                    select(m.ReviewItemModel).where(
+                        m.ReviewItemModel.raw_record_id == raw.id
+                    )
+                )
+                records.append(
+                    _object(
+                        {
+                            "id": raw.id,
+                            "kind": raw.kind,
+                            "source_line_start": raw.source_line_start,
+                            "source_line_end": raw.source_line_end,
+                            "candidate_revision_id": candidate.id
+                            if candidate
+                            else None,
+                            "business_identifier": _business_identifier(candidate)
+                            if candidate
+                            else None,
+                            "classification_id": classification.id
+                            if classification
+                            else None,
+                            "verdict": classification.verdict
+                            if classification
+                            else None,
+                            "review_item_id": review.id if review else None,
+                        }
+                    )
+                )
             return RunDetailView(
-                self._run(session, run), occurrences, checkpoints, events
+                self._run(session, run),
+                occurrences,
+                checkpoints,
+                events,
+                tuple(records),
+                evidence,
             )
 
     def review_queue(self, query: ReviewQueueQuery) -> ReviewQueueView:
@@ -361,7 +423,7 @@ class SqlAlchemyReadRepository:
                 allowed,
             )
 
-    def _evidence(self, session: Session, review: m.ReviewItemModel) -> EvidenceView:
+    def _evidence(self, session: Session, *roots: m.Base) -> EvidenceView:
         # Follow explicit references and owning records, never copy candidate
         # payloads into queue rows or comparison summaries.
         models: tuple[type[m.Base], ...] = (
@@ -384,7 +446,7 @@ class SqlAlchemyReadRepository:
             m.ReobservationLinkModel,
         )
         nodes: dict[tuple[str, UUID], EvidenceNode] = {}
-        pending: list[m.Base] = [review]
+        pending: list[m.Base] = list(roots)
         searched: set[UUID] = set()
         while pending:
             row = pending.pop()
@@ -451,6 +513,22 @@ class SqlAlchemyReadRepository:
                     session.scalars(
                         select(m.DependencyRecordModel).where(
                             m.DependencyRecordModel.classification_id == identity
+                        )
+                    )
+                )
+            if isinstance(row, m.RawRecordModel):
+                pending.extend(
+                    session.scalars(
+                        select(m.ReviewItemModel).where(
+                            m.ReviewItemModel.raw_record_id == identity
+                        )
+                    )
+                )
+            if isinstance(row, m.ReviewItemModel):
+                pending.extend(
+                    session.scalars(
+                        select(m.ReviewDecisionModel).where(
+                            m.ReviewDecisionModel.review_item_id == identity
                         )
                     )
                 )
