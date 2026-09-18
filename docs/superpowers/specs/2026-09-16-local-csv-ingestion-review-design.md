@@ -1,6 +1,6 @@
 # Local CSV Ingestion and Review Design Specification
 
-**Status:** Approved product design — pending owner review of this consolidated amendment
+**Status:** Approved product design — local MVP implemented and verified on 18 September 2026
 **Date:** 16 September 2026
 **Amended:** 17 September 2026 — actionable review MVP and consolidated vertical slice
 **Approved:** 17 September 2026
@@ -407,7 +407,7 @@ Tests use the fixed clock and no network. The golden file hash must match before
 
 ## 13. Delivery decomposition
 
-The foundation and derived pipeline through atomic canonical staging already exist. The replacement implementation plan will deliver one consolidated vertical slice in six reviewable tasks:
+The foundation and derived pipeline through atomic canonical staging already exist. The replacement implementation plan delivered one consolidated vertical slice in six reviewable tasks:
 
 1. **Close the existing pipeline** — independently review the atomic staging task, add the `process_run` orchestrator, prove the frozen sample end to end, and retain one representative failure/retry equality proof.
 2. **Review decisions and canonical promotion** — add decision and promotion persistence, activate/backfill current state for eligible revisions created by the existing loader, add command invariants, reversal, idempotency, and stale-write tests.
@@ -416,7 +416,7 @@ The foundation and derived pipeline through atomic canonical staging already exi
 5. **Run and review workflows** — implement evidence inspection, filtered queue/detail, legal actions, decision history, and stale-state recovery.
 6. **End-to-end acceptance** — prove upload through canonical result, retry, duplicate submission, reversal, keyboard flow, basic accessibility, and repository quality gates.
 
-The older read-only API and operator-web plans are superseded. The derived-pipeline plan remains historical authority for completed tasks 1–7; its unstarted golden task is replaced by task 1 above. A separate replacement implementation plan will be written only after the owner approves this amended design.
+The older read-only API and operator-web plans are superseded. The derived-pipeline plan remains historical authority for completed tasks 1–7; its unstarted golden task is replaced by task 1 above. The replacement [vertical-slice plan](../plans/2026-09-17-actionable-review-vertical-slice.md) is delivered. The complete repository gate passed on 18 September 2026: 614 Python tests, 63 web tests, one real Chromium operator flow, Ruff, strict Pyright, TypeScript, and production build. `./scripts/run-local.sh` migrates and serves the local application; `./scripts/quality-gate.sh` repeats verification. See [README.md](../../../README.md) for setup, test isolation, verified runtime versions, operator steps, and deferred scope. Browser acceptance covers one representative normalisation failure/retry plus keyboard inspection, approval, canonical activation/reversal, and no-write duplicate reuse; focused suites retain boundary-specific recovery coverage.
 
 ## 14. Acceptance criteria
 

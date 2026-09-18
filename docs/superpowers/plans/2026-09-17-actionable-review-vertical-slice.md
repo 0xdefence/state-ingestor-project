@@ -548,7 +548,7 @@ git commit -m "feat: add run and review workflows"
 - Consumes: complete API and web app
 - Produces: stable local start and repository quality-gate commands
 
-- [ ] **Step 1: Write the failing Playwright operator flow**
+- [x] **Step 1: Write the failing Playwright operator flow**
 
 The test must upload `data/messy_sample_data.csv`, process it, open a review item, inspect exact source and interpreted values, make a legal decision, verify the canonical result, reverse it, upload the same bytes again, and verify occurrence count increases while the run is reused.
 
@@ -559,31 +559,31 @@ await page.getByRole('button', {name: 'Upload and process'}).click();
 await expect(page.getByText('Processed')).toBeVisible();
 ```
 
-- [ ] **Step 2: Add deterministic local start scripts**
+- [x] **Step 2: Add deterministic local start scripts**
 
 `scripts/run-local.sh` applies migrations, starts FastAPI on `127.0.0.1:8000`, and starts Vite on `127.0.0.1:5173` with cleanup traps. It uses local PostgreSQL and filesystem storage only. `scripts/quality-gate.sh` runs Python tests, Ruff, Pyright, web tests, typecheck, and build in a fixed order.
 
-- [ ] **Step 3: Add retry and duplicate checks to acceptance**
+- [x] **Step 3: Add retry and duplicate checks to acceptance**
 
 Use API fixtures/failure injection for one recoverable processing failure, resume the same run, and verify the final projection. Verify a byte-identical second upload creates a new occurrence, reuses the run, and performs no duplicate pipeline or canonical writes.
 
-- [ ] **Step 4: Run the browser and accessibility acceptance gate**
+- [x] **Step 4: Run the browser and accessibility acceptance gate**
 
 Run: `cd apps/web && bunx playwright test e2e/operator-flow.spec.ts`
 
 Expected: the keyboard-operable upload/process/review/promotion/reversal/duplicate flow passes.
 
-- [ ] **Step 5: Run the complete repository quality gate**
+- [x] **Step 5: Run the complete repository quality gate**
 
 Run: `./scripts/quality-gate.sh`
 
 Expected: all Python tests, web tests, Ruff, strict Pyright, TypeScript, and production build pass with no unexpected warnings.
 
-- [ ] **Step 6: Update canonical documentation with verified commands and status**
+- [x] **Step 6: Update canonical documentation with verified commands and status**
 
 Mark the MVP implemented only after Step 5 passes. Document setup, migration, local launch, operator flow, test commands, and the remaining deferred scope. Remove the superseded warning only from plans whose replacement is now delivered; keep historical plans clearly non-executable.
 
-- [ ] **Step 7: Commit Task 6**
+- [x] **Step 7: Commit Task 6**
 
 ```bash
 git add apps/web scripts README.md docs

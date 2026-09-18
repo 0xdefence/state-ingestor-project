@@ -1,6 +1,6 @@
 # Architecture: local CSV ingestion and review
 
-**Status:** Canonical MVP specification — pending owner review of actionable-review amendment
+**Status:** Canonical MVP specification — local actionable-review MVP implemented and verified on 18 September 2026
 **Consolidated:** 16 September 2026
 **Amended:** 17 September 2026
 **Scope:** Local CSV → process → inspect exceptions → decide → promote approved revisions while preserving complete lineage
@@ -644,12 +644,23 @@ The golden test asserts:
 
 ### 11.11 Required test commands
 
-The repository must expose these stable commands once implementation begins:
+The verified repository gate is:
 
-```text
-pytest -q tests/unit
-pytest -q tests/integration/test_messy_sample_data.py
-bun test apps/web
+```sh
+./scripts/quality-gate.sh
 ```
 
-The first two commands run against an isolated test database or repository implementation. The web command runs in a DOM test environment. A change is acceptable only when the relevant test was first observed failing for the intended reason, all three commands pass, and output contains no unexpected errors or warnings.
+It runs all Python unit/integration tests, Ruff, strict Pyright, web component/accessibility tests, TypeScript, the production build, and the browser operator flow in a fixed order. On 18 September 2026 it passed with 614 Python tests, 63 web tests, and one Chromium acceptance test, with no unexpected warnings. The browser flow uses a freshly migrated disposable PostgreSQL database and real API/filesystem storage, injects one recoverable normalisation batch failure, proves retry, inspects source and interpreted evidence, approves and reverses a decision, and proves identical re-upload adds an occurrence without changing any pipeline/canonical rows.
+
+Focused commands remain available:
+
+```sh
+.venv/bin/pytest -q tests/unit
+.venv/bin/pytest -q tests/integration/test_messy_sample_data.py
+(cd apps/web && bun run test)
+(cd apps/web && bunx playwright test e2e/operator-flow.spec.ts)
+```
+
+`bun run test` invokes the configured Vitest DOM environment. Use `./scripts/run-local.sh` for migration and loopback API/web launch. Setup, environment variables, test database privileges, verified runtime versions, and operator instructions are in [`README.md`](../README.md). Tests use temporary databases and source storage. The acceptance fixture and its failure/snapshot endpoints are test-only; normal launch uses the product FastAPI factory.
+
+The verified runtime was Python 3.13.12, Bun 1.3.5, PostgreSQL 17.7, and Chromium 153.0.8010.12. The supplied Compose configuration remains PostgreSQL 16; that container and additional browser/device environments were not exercised in this acceptance run. Deferred production and governance scope remains in [`TODO.md`](../TODO.md).

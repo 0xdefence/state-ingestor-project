@@ -1,6 +1,6 @@
 # Operator Web Interface and Final Verification Implementation Plan
 
-> **Superseded on 17 September 2026.** The approved MVP now requires upload/process and approve/reject/acknowledge workflows. Do not execute this read-only interface plan. Its still-relevant visual, evidence, keyboard, and error-state requirements will be folded into the consolidated vertical-slice implementation plan after owner review of the amended design specification.
+> **Historical plan — do not execute.** Replaced by the delivered [actionable-review vertical slice](2026-09-17-actionable-review-vertical-slice.md), verified on 18 September 2026. Current behavior and verification commands live in [the canonical architecture](../../ARCHITECTURE.md).
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
