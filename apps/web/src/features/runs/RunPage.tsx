@@ -44,6 +44,7 @@ export function RunPage() {
     const next = new URLSearchParams(params);
     next.set(key, value);
     if (key === "record") next.delete("review");
+    if (key === "review") next.delete("record");
     setParams(next);
   };
   if (query.isPending)
@@ -253,7 +254,7 @@ export function RunPage() {
           )}
         </div>
         {selected ? (
-          <ReviewDetail key={selected} id={selected} />
+          <ReviewDetail key={selected} id={selected} expectedRunId={runId} />
         ) : record ? (
           <section className="panel" aria-live="polite">
             <h2>

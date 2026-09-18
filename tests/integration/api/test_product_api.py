@@ -459,3 +459,151 @@ def test_run_lists_every_raw_record_with_one_linked_evidence_graph(app):
             )
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("quantity", ["1", "many"])
+def test_review_projects_current_dependency_readiness_without_rewriting_classification(
+    app, quantity
+):
+    from tests.integration.review.test_decisions import REVIEW_PRODUCT
+    from tests.unit.classify.test_rules import CUSTOMER, ORDER
+
+    async def scenario():
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            content = (
+                CUSTOMER
+                + REVIEW_PRODUCT
+                + ORDER.replace(",19.99,1,", f",19.99,{quantity},")
+            )
+            uploaded = (
+                await client.post(
+                    "/api/uploads",
+                    files={"file": ("dependencies.csv", content.encode())},
+                    data={"operator_name": "Alex"},
+                )
+            ).json()
+            run_id = uploaded["run_id"]
+            await client.post(f"/api/runs/{run_id}/process")
+            items = (
+                await client.get(
+                    "/api/reviews", params={"scope": "current", "run_id": run_id}
+                )
+            ).json()["items"]
+            order = next(i for i in items if i["business_identifier"] == "ORD-3001")
+            product = next(i for i in items if i["business_identifier"] == "SKU-2004")
+            before = (await client.get(f"/api/reviews/{order['id']}")).json()
+            assert before["item"]["current_readiness"] == "blocked_by_dependency"
+            assert before["item"]["current_status"] == "blocked_by_dependency"
+            assert "approve" not in before["allowed_outcomes"]
+            assert before["item"]["readiness"] == (
+                "blocked_by_dependency" if quantity == "1" else "ineligible"
+            )
+            result = await client.post(
+                f"/api/reviews/{product['id']}/decisions",
+                json={
+                    "candidate_revision_id": product["candidate_revision_id"],
+                    "expected_sequence": 0,
+                    "outcome": "approve",
+                    "operator_name": "Alex",
+                    "idempotency_key": "unblock",
+                },
+            )
+            assert result.status_code == 200, result.text
+            after = (await client.get(f"/api/reviews/{order['id']}")).json()
+            assert after["item"]["readiness"] == before["item"]["readiness"]
+            assert after["item"]["current_readiness"] == "ready"
+            assert after["item"]["current_status"] == (
+                "promoted" if quantity == "1" else "pending"
+            )
+            assert after["item"]["canonical_effect"] == (
+                "current" if quantity == "1" else "not_promoted"
+            )
+            assert bool(after["item"]["canonical_revision_id"]) == (quantity == "1")
+            assert after["allowed_outcomes"] == (
+                [] if quantity == "1" else ["approve", "reject"]
+            )
+            refreshed = (
+                await client.get(
+                    "/api/reviews", params={"scope": "current", "run_id": run_id}
+                )
+            ).json()["items"]
+            assert next(i for i in refreshed if i["id"] == order["id"]) == after["item"]
+            pending = (
+                await client.get(
+                    "/api/reviews",
+                    params={
+                        "scope": "current",
+                        "run_id": run_id,
+                        "effective_state": "pending",
+                    },
+                )
+            ).json()["items"]
+            assert (order["id"] in {i["id"] for i in pending}) == (quantity == "many")
+            workspace = (
+                await client.get(
+                    "/api/workspace", params={"scope": "current", "run_id": run_id}
+                )
+            ).json()
+            assert workspace["review_counts"]["pending"] == (
+                1 if quantity == "many" else 0
+            )
+
+    asyncio.run(scenario())
+
+
+def test_issue_evidence_exposes_registered_status_and_tag_domains(app):
+    from tests.integration.review.test_decisions import REVIEW_PRODUCT
+
+    async def scenario():
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            # Add malformed tags alongside the fixture's invalid status.
+            content = REVIEW_PRODUCT.replace("accessories", "accessories123")
+            uploaded = (
+                await client.post(
+                    "/api/uploads",
+                    files={"file": ("status.csv", content.encode())},
+                    data={"operator_name": "Alex"},
+                )
+            ).json()
+            await client.post(f"/api/runs/{uploaded['run_id']}/process")
+            queue = (
+                await client.get(
+                    "/api/reviews",
+                    params={"scope": "current", "run_id": uploaded["run_id"]},
+                )
+            ).json()
+            detail = (
+                await client.get(f"/api/reviews/{queue['items'][0]['id']}")
+            ).json()
+            issue = next(
+                n
+                for n in detail["evidence"]["nodes"]
+                if n["kind"] == "data_quality_issue"
+                and n["attributes"]["code"] == "INVALID_STATUS"
+            )
+            assert (
+                issue["attributes"]["expected_domain"]
+                == "One of: in_stock, discontinued, pending_review, backordered"
+            )
+            tags = next(
+                n
+                for n in detail["evidence"]["nodes"]
+                if n["kind"] == "data_quality_issue"
+                and n["attributes"]["code"] == "INVALID_TAGS"
+            )
+            assert (
+                tags["attributes"]["expected_domain"]
+                == "Letter-only tags separated by |; blank or N/A means no tags"
+            )
+            candidate = next(
+                n
+                for n in detail["evidence"]["nodes"]
+                if n["id"] == detail["item"]["candidate_revision_id"]
+            )
+            assert candidate["attributes"]["payload"]["status"]["state"] == "unresolved"
+
+    asyncio.run(scenario())

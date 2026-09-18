@@ -52,6 +52,11 @@ export interface ReviewRow {
   verdict_label: string;
   readiness: string;
   readiness_label: string;
+  current_readiness: string;
+  canonical_effect: string;
+  canonical_revision_id: string | null;
+  current_status: string;
+  current_status_label: string;
   effective_state: string;
   effective_state_label: string;
   decision_sequence: number;

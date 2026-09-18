@@ -66,8 +66,10 @@ def test_projection_and_http_options_match_reachable_verdict(
         assert row.readiness == "blocked_by_dependency"
         assert row.effective_state == "pending"
         assert row.readiness_label == "Waiting for another record"
-        assert row.effective_state_label == "Waiting for another record"
-        assert detail.item.effective_state_label == "Waiting for another record"
+        assert row.effective_state_label == "Awaiting review"
+        assert row.current_status == "blocked_by_dependency"
+        assert row.current_status_label == "Waiting for another record"
+        assert detail.item.current_status_label == "Waiting for another record"
 
     async def scenario():
         app = create_app(
@@ -84,7 +86,7 @@ def test_projection_and_http_options_match_reachable_verdict(
             assert response.json()["allowed_outcomes"] == list(expected)
             if not expected:
                 assert (
-                    response.json()["item"]["effective_state_label"]
+                    response.json()["item"]["current_status_label"]
                     == "Waiting for another record"
                 )
                 for outcome in ("approve", "reject", "acknowledge"):

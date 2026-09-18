@@ -1,4 +1,4 @@
-import { useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import type { FileScope } from "../../api/contracts";
 import { scopeParams, useReviews, useWorkspace } from "../../api/queries";
@@ -6,8 +6,22 @@ import { displayLabel, verdictOrder } from "../../labels";
 import { ScopeControl } from "../workspace/ScopeControl";
 import { ReviewQueue } from "./ReviewQueue";
 import { ReviewDetail } from "./ReviewDetail";
+import { normalizedReviewParams } from "./routeState";
 export function ReviewPage() {
-  const [params, setParams] = useSearchParams();
+  const [rawParams, setParams] = useSearchParams();
+  const params = normalizedReviewParams(rawParams);
+  const [adjusted, setAdjusted] = useState(false);
+  const rawSorted = new URLSearchParams(rawParams);
+  rawSorted.sort();
+  const normalizedSorted = new URLSearchParams(params);
+  normalizedSorted.sort();
+  const malformed = normalizedSorted.toString() !== rawSorted.toString();
+  useEffect(() => {
+    if (malformed) {
+      setAdjusted(true);
+      setParams(params, { replace: true });
+    }
+  }, [rawParams.toString()]);
   const kind = params.get("scope");
   const scope: FileScope = {
     kind: kind === "current" || kind === "selected" ? kind : "all",
@@ -38,6 +52,11 @@ export function ReviewPage() {
         <h1>Review records</h1>
         <p>Inspect the evidence and record a whole-record decision.</p>
       </header>
+      {adjusted && (
+        <p role="status" className="notice">
+          Some URL filters were invalid and have been adjusted.
+        </p>
+      )}
       <ScopeControl
         scope={scope}
         currentRunId={currentRun.current}

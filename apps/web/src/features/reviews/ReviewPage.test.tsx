@@ -1,3 +1,4 @@
+import { conflictDetail, statusDetail } from "../../test/workflowFixtures";
 import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, test, expect, vi } from "vitest";
@@ -60,7 +61,12 @@ test("blocked dependencies never offer approval", async () => {
     url === "/api/reviews/review-1"
       ? Response.json({
           ...detail,
-          item: { ...item, readiness: "blocked_by_dependency" },
+          item: {
+            ...item,
+            readiness: "blocked_by_dependency",
+            current_readiness: "blocked_by_dependency",
+            current_status: "blocked_by_dependency",
+          },
           allowed_outcomes: ["approve", "reject"],
         })
       : undefined,
@@ -345,4 +351,152 @@ test("reversal submits the displayed latest decision and sequence", async () => 
       outcome: "reject",
     }),
   );
+});
+
+test("current promotion status replaces historical dependency blocking", async () => {
+  const promoted = {
+    ...item,
+    verdict: "CLEAN",
+    readiness: "blocked_by_dependency",
+    current_readiness: "ready",
+    current_status: "promoted",
+    canonical_effect: "current",
+    canonical_revision_id: "order-canonical",
+  };
+  fakeWorkflow((url) =>
+    url === "/api/reviews/review-1"
+      ? Response.json({ ...detail, item: promoted, allowed_outcomes: [] })
+      : url.startsWith("/api/reviews?")
+        ? Response.json({
+            scope: { kind: "all", run_ids: [] },
+            items: [promoted],
+          })
+        : undefined,
+  );
+  await renderWorkflow("/reviews?review=review-1");
+  expect(
+    (await screen.findAllByText("Promoted to canonical data")).length,
+  ).toBeGreaterThan(0);
+  expect(
+    screen.queryByText("Waiting for another record"),
+  ).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "Approve" }),
+  ).not.toBeInTheDocument();
+});
+test("reviewable ineligible classification shows current dependency blocking", async () => {
+  const blocked = {
+    ...item,
+    readiness: "ineligible",
+    current_readiness: "blocked_by_dependency",
+    current_status: "blocked_by_dependency",
+  };
+  fakeWorkflow((url) =>
+    url === "/api/reviews/review-1"
+      ? Response.json({
+          ...detail,
+          item: blocked,
+          allowed_outcomes: ["reject"],
+        })
+      : undefined,
+  );
+  await renderWorkflow("/reviews?review=review-1");
+  expect(await screen.findByText("Waiting for another record")).toBeVisible();
+  expect(
+    screen.queryByRole("button", { name: "Approve" }),
+  ).not.toBeInTheDocument();
+});
+test("malformed shareable filters recover to valid state with an explanation", async () => {
+  const requests: string[] = [];
+  fakeWorkflow((url) => {
+    requests.push(url);
+    return undefined;
+  });
+  const { router } = await renderWorkflow(
+    `/reviews?scope=current&run_id=${run.id}&run_id=22222222-2222-4222-8222-222222222222&state=bogus&verdict=WRONG&review=review-1`,
+  );
+  await screen.findByRole("heading", { name: "Review ORD-3001" });
+  expect(
+    screen.getByText("Some URL filters were invalid and have been adjusted."),
+  ).toBeVisible();
+  expect(new URLSearchParams(router.state.location.search).get("scope")).toBe(
+    "selected",
+  );
+  expect(
+    new URLSearchParams(router.state.location.search).getAll("run_id"),
+  ).toEqual([run.id, "22222222-2222-4222-8222-222222222222"]);
+  expect(router.state.location.search).not.toContain("bogus");
+  expect(router.state.location.search).not.toContain("WRONG");
+  expect(
+    requests
+      .filter((r) => r.startsWith("/api/reviews?"))
+      .every(
+        (r) =>
+          !r.includes("scope=current") &&
+          !r.includes("bogus") &&
+          !r.includes("WRONG"),
+      ),
+  ).toBe(true);
+});
+
+test("conflict evidence compares usable current and prior values to the proposed product", async () => {
+  fakeWorkflow((url) =>
+    url === "/api/reviews/review-1" ? Response.json(conflictDetail) : undefined,
+  );
+  await renderWorkflow("/reviews?review=review-1");
+  const current = await screen.findByRole("region", {
+    name: "Current canonical values for SKU-2004",
+  });
+  expect(current).toHaveTextContent("Old Widget");
+  expect(current).toHaveTextContent("New Widget");
+  expect(current).toHaveTextContent("5");
+  expect(current).toHaveTextContent("12");
+  expect(current).toHaveTextContent("Proposed value");
+  expect(
+    screen.getByRole("region", { name: "Prior canonical values for SKU-2004" }),
+  ).toHaveTextContent("Original Widget");
+  expect(screen.getByText("Linked record: CUST-1001")).toBeVisible();
+});
+test("invalid status explains server-provided expected domain with exact source and field state", async () => {
+  fakeWorkflow((url) =>
+    url === "/api/reviews/review-1" ? Response.json(statusDetail) : undefined,
+  );
+  await renderWorkflow("/reviews?review=review-1");
+  expect(
+    await screen.findByText(
+      "Expected value: One of: in_stock, discontinued, pending_review, backordered",
+    ),
+  ).toBeVisible();
+  expect(screen.getAllByText("out_of_stock").at(-1)).toBeVisible();
+  expect(screen.getAllByText("Unresolved")[0]).toBeVisible();
+  expect(screen.getAllByText("Unsupported status").length).toBeGreaterThan(0);
+});
+
+test("unknown scope falls back to All files while retaining valid filter and selection", async () => {
+  const requests: string[] = [];
+  fakeWorkflow((url) => {
+    requests.push(url);
+    return undefined;
+  });
+  const { router } = await renderWorkflow(
+    "/reviews?scope=mystery&state=pending&review=review-1",
+  );
+  await screen.findByRole("heading", { name: "Review ORD-3001" });
+  expect(
+    screen.getByText("Some URL filters were invalid and have been adjusted."),
+  ).toBeVisible();
+  expect(screen.getByLabelText("File scope")).toHaveValue("all");
+  expect(screen.getByLabelText("Review state")).toHaveValue("pending");
+  expect(router.state.location.search).toContain("review=review-1");
+  expect(requests).toContain("/api/reviews?scope=all&effective_state=pending");
+});
+test("a valid shareable state does not claim its filters were invalid", async () => {
+  fakeWorkflow();
+  await renderWorkflow(
+    `/reviews?scope=current&run_id=${run.id}&state=pending&review=review-1`,
+  );
+  await screen.findByRole("heading", { name: "Review ORD-3001" });
+  expect(
+    screen.queryByText("Some URL filters were invalid and have been adjusted."),
+  ).not.toBeInTheDocument();
 });

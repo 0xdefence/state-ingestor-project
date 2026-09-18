@@ -64,14 +64,7 @@ export function ReviewQueue({
               <span className="queue-reason">
                 {item.reason_summaries.join("; ")}
               </span>
-              <Status
-                value={
-                  item.readiness === "blocked_by_dependency" &&
-                  item.effective_state === "pending"
-                    ? item.readiness
-                    : item.effective_state
-                }
-              />
+              <Status value={item.current_status} />
             </button>
             <p>
               <Link to={`/runs/${item.run_id}?review=${item.id}`}>

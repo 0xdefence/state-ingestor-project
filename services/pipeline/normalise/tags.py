@@ -10,6 +10,8 @@ from services.pipeline.normalise.evidence import (
     NormalisedField,
 )
 
+TAG_FORMAT_DESCRIPTION = "Letter-only tags separated by |; blank or N/A means no tags"
+
 _TAGS = re.compile(r"[A-Za-z]+(?:\|[A-Za-z]+)*")
 
 

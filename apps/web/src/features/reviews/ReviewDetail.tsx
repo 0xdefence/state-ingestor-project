@@ -5,7 +5,13 @@ import { Status } from "../../components/Status";
 import { EvidencePanel, object, Value } from "../runs/EvidencePanel";
 import { DecisionForm } from "./DecisionForm";
 import { DecisionHistory } from "./DecisionHistory";
-export function ReviewDetail({ id }: { id: string }) {
+export function ReviewDetail({
+  id,
+  expectedRunId,
+}: {
+  id: string;
+  expectedRunId?: string;
+}) {
   const query = useReview(id);
   const heading = useRef<HTMLHeadingElement>(null);
   useEffect(() => {
@@ -30,6 +36,19 @@ export function ReviewDetail({ id }: { id: string }) {
     );
   const detail = query.data;
   const { item } = detail;
+  if (expectedRunId && item.run_id !== expectedRunId)
+    return (
+      <section className="panel" role="alert">
+        <h2>Select a record from this run</h2>
+        <p>
+          This review belongs to another file. Open its source run to inspect
+          and decide.
+        </p>
+        <Link to={`/runs/${item.run_id}?review=${item.id}`}>
+          Open the matching run
+        </Link>
+      </section>
+    );
   const runNode = detail.evidence.nodes.find(
     (n) => n.kind === "run" && n.id === item.run_id,
   );
@@ -43,7 +62,7 @@ export function ReviewDetail({ id }: { id: string }) {
           Review{" "}
           {item.business_identifier ?? "record without a business identifier"}
         </h2>
-        <Status value={item.effective_state} />
+        <Status value={item.current_status} />
       </div>
       <p>
         <Link to={`/runs/${item.run_id}?review=${item.id}`}>
@@ -56,9 +75,6 @@ export function ReviewDetail({ id }: { id: string }) {
       </p>
       <div className="detail-states">
         <Status value={item.verdict} />
-        {item.readiness === "blocked_by_dependency" && (
-          <Status value={item.readiness} />
-        )}
       </div>
       <p>
         Pipeline position:{" "}
@@ -81,7 +97,7 @@ export function ReviewDetail({ id }: { id: string }) {
         </div>
       )}
       <section className="review-reasons">
-        <h3>Why this record needs review</h3>
+        <h3>Why this record entered review</h3>
         <ul>
           {item.reason_summaries.map((reason, i) => (
             <li key={i}>{reason}</li>

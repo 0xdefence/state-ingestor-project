@@ -44,6 +44,7 @@ export const detail = {
         attributes: {
           candidate_revision_id: "candidate-1",
           code: "INVALID_INTEGER",
+          expected_domain: "A whole number",
           field_path: "quantity",
           summary: "A number was expected for quantity",
           source_refs: [{ raw_record_id: "raw-1", field_index: 2 }],
@@ -193,4 +194,184 @@ export const runDetail = {
     occurred_at: instant,
     facts: { record_count: 18 },
   })),
+};
+
+const known = (value: string | number) => ({
+  state: "known",
+  value,
+  source_refs: [],
+  transformation_refs: [],
+  issue_refs: [],
+});
+export const conflictDetail = {
+  ...detail,
+  item: {
+    ...item,
+    entity_type: "product",
+    business_identifier: "SKU-2004",
+    reason_summaries: ["A different value is already current for this product"],
+  },
+  evidence: {
+    nodes: [
+      {
+        kind: "raw_record",
+        id: "raw-1",
+        attributes: {
+          fields: ["PRODUCT", "SKU-2004", "New Widget"],
+          kind: "data",
+          source_line_start: 9,
+          source_line_end: 9,
+        },
+      },
+      {
+        kind: "candidate_revision",
+        id: "candidate-1",
+        attributes: {
+          raw_record_id: "raw-1",
+          entity_type: "product",
+          created_at: instant,
+          payload: {
+            sku: known("SKU-2004"),
+            name: known("New Widget"),
+            stock_qty: known(12),
+          },
+        },
+      },
+      {
+        kind: "candidate_revision",
+        id: "prior-candidate",
+        attributes: {
+          raw_record_id: "raw-prior",
+          entity_type: "product",
+          created_at: instant,
+          payload: {
+            sku: known("SKU-2004"),
+            name: known("Old Widget"),
+            stock_qty: known(5),
+          },
+        },
+      },
+      {
+        kind: "candidate_revision",
+        id: "historical-candidate",
+        attributes: {
+          raw_record_id: "raw-older",
+          entity_type: "product",
+          created_at: instant,
+          payload: {
+            sku: known("SKU-2004"),
+            name: known("Original Widget"),
+            stock_qty: known(3),
+          },
+        },
+      },
+      {
+        kind: "canonical_identity",
+        id: "product-identity",
+        attributes: {
+          entity_type: "product",
+          current_revision_id: "canonical-current",
+        },
+      },
+      {
+        kind: "canonical_revision",
+        id: "canonical-current",
+        attributes: {
+          identity_id: "product-identity",
+          candidate_revision_id: "prior-candidate",
+          revision_number: 2,
+          staged_at: instant,
+        },
+      },
+      {
+        kind: "canonical_revision",
+        id: "canonical-older",
+        attributes: {
+          identity_id: "product-identity",
+          candidate_revision_id: "historical-candidate",
+          revision_number: 1,
+          staged_at: instant,
+        },
+      },
+      {
+        kind: "canonical_identity",
+        id: "customer-identity",
+        attributes: {
+          entity_type: "customer",
+          current_revision_id: "customer-canonical",
+        },
+      },
+      {
+        kind: "canonical_revision",
+        id: "customer-canonical",
+        attributes: {
+          identity_id: "customer-identity",
+          candidate_revision_id: "customer-candidate",
+          revision_number: 1,
+          staged_at: instant,
+        },
+      },
+      {
+        kind: "candidate_revision",
+        id: "customer-candidate",
+        attributes: {
+          entity_type: "customer",
+          payload: {
+            customer_id: known("CUST-1001"),
+            name: known("Dependency customer"),
+          },
+        },
+      },
+    ],
+  },
+};
+export const statusDetail = {
+  ...detail,
+  item: {
+    ...item,
+    entity_type: "product",
+    business_identifier: "SKU-2004",
+    reason_summaries: ["Unsupported status"],
+  },
+  evidence: {
+    nodes: [
+      {
+        kind: "raw_record",
+        id: "raw-1",
+        attributes: { fields: ["PRODUCT", "SKU-2004", "out_of_stock"] },
+      },
+      {
+        kind: "candidate_revision",
+        id: "candidate-1",
+        attributes: {
+          raw_record_id: "raw-1",
+          entity_type: "product",
+          created_at: instant,
+          payload: {
+            sku: known("SKU-2004"),
+            status: {
+              state: "unresolved",
+              value: null,
+              source_refs: [{ raw_record_id: "raw-1", field_index: 2 }],
+              issue_refs: ["status-issue"],
+              transformation_refs: [],
+            },
+          },
+        },
+      },
+      {
+        kind: "data_quality_issue",
+        id: "status-issue",
+        attributes: {
+          candidate_revision_id: "candidate-1",
+          code: "INVALID_STATUS",
+          field_path: "product.status",
+          summary: "Unsupported status",
+          expected_domain:
+            "One of: in_stock, discontinued, pending_review, backordered",
+          source_refs: [{ raw_record_id: "raw-1", field_index: 2 }],
+        },
+      },
+    ],
+  },
 };

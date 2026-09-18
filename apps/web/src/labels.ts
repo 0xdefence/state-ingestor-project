@@ -28,6 +28,7 @@ const labels: Record<string, string> = {
   ...verdicts,
   ...states,
   pending: "Awaiting review",
+  promoted: "Promoted to canonical data",
   approved: "Approved",
   rejected: "Rejected",
   acknowledged: "Acknowledged",
@@ -37,6 +38,10 @@ const labels: Record<string, string> = {
   normalise_failed: "Value interpretation failed",
   classify_failed: "Record checks failed",
   load_failed: "Loading failed",
+  sku: "Product identifier",
+  customer_id: "Customer identifier",
+  order_id: "Order identifier",
+  stock_qty: "Stock quantity",
   approve: "Approve",
   reject: "Reject",
   acknowledge: "Acknowledge",
@@ -70,13 +75,15 @@ export const displayLabel = (value: string): string =>
   labels[value] ??
   value
     .toLowerCase()
-    .replace(/[_-]+/g, " ")
+    .replace(/[_.-]+/g, " ")
     .replace(/\b\w/g, (c) => c.toUpperCase());
 export type Tone = "green" | "amber" | "red" | "purple" | "grey";
 export function statusTone(value: string): Tone {
   if (value.endsWith("_failed")) return "red";
   if (value === "blocked_by_dependency") return "purple";
-  if (["staged", "CLEAN", "AUTO_REPAIRED", "approved"].includes(value))
+  if (
+    ["staged", "CLEAN", "AUTO_REPAIRED", "approved", "promoted"].includes(value)
+  )
     return "green";
   if (
     [
@@ -98,10 +105,3 @@ export const verdictOrder: Verdict[] = [
   "REJECTED",
   "DUPLICATE",
 ];
-
-export const expectedValue: Record<string, string> = {
-  INVALID_INTEGER: "A whole number",
-  INVALID_MONEY: "A money amount",
-  INVALID_DATE: "A valid date",
-  INVALID_EMAIL: "An email address",
-};

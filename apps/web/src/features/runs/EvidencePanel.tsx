@@ -5,7 +5,7 @@ import type {
   EvidenceView,
 } from "../../api/contracts";
 import { AbsoluteTime } from "../../components/AbsoluteTime";
-import { displayLabel, expectedValue } from "../../labels";
+import { displayLabel } from "../../labels";
 export function object(
   value: EvidenceValue | undefined,
 ): Record<string, EvidenceValue> {
@@ -80,6 +80,100 @@ export function TechnicalEvidence({ nodes }: { nodes: EvidenceNode[] }) {
         </details>
       ))}
     </details>
+  );
+}
+function businessIdentity(candidate: EvidenceNode | undefined) {
+  const payload = object(candidate?.attributes.payload);
+  for (const key of ["customer_id", "sku", "order_id"]) {
+    const field = object(payload[key]);
+    if (field.state === "known" && typeof field.value === "string")
+      return { key, value: field.value };
+  }
+  return null;
+}
+function CandidateValue({ value }: { value: EvidenceValue | undefined }) {
+  const field = object(value);
+  return typeof field.state === "string" ? (
+    field.state === "known" ? (
+      <Value value={field.value} />
+    ) : (
+      <span>{displayLabel(field.state)}</span>
+    )
+  ) : (
+    <Value value={value} />
+  );
+}
+function CanonicalValues({
+  revision,
+  nodes,
+  proposed,
+}: {
+  revision: EvidenceNode;
+  nodes: EvidenceNode[];
+  proposed: EvidenceNode | undefined;
+}) {
+  const previous = nodes.find(
+    (n) =>
+      n.kind === "candidate_revision" &&
+      n.id === revision.attributes.candidate_revision_id,
+  );
+  const identity = nodes.find(
+    (n) =>
+      n.kind === "canonical_identity" &&
+      n.id === revision.attributes.identity_id,
+  );
+  const current = identity?.attributes.current_revision_id === revision.id;
+  const previousKey = businessIdentity(previous);
+  const proposedKey = businessIdentity(proposed);
+  const sameRecord =
+    previousKey &&
+    proposedKey &&
+    previousKey.key === proposedKey.key &&
+    previousKey.value === proposedKey.value;
+  const previousFields = object(previous?.attributes.payload);
+  const proposedFields = object(proposed?.attributes.payload);
+  if (!sameRecord)
+    return (
+      <details>
+        <summary>
+          Linked record:{" "}
+          {previousKey?.value ?? "Business identifier unavailable"}
+        </summary>
+        <p>{current ? "Current" : "Prior"} canonical values</p>
+        <Value value={previous?.attributes.payload} />
+      </details>
+    );
+  const title = `${current ? "Current" : "Prior"} canonical values for ${previousKey.value}`;
+  return (
+    <section aria-label={title} className="canonical-comparison">
+      <h4>{title}</h4>
+      {[
+        ...new Set([
+          ...Object.keys(previousFields),
+          ...Object.keys(proposedFields),
+        ]),
+      ]
+        .filter((k) => k !== "entity_type")
+        .map((key) => (
+          <div className="comparison-field" key={key}>
+            <h5>{displayLabel(key)}</h5>
+            <dl>
+              <div>
+                <dt>{current ? "Current value" : "Prior value"}</dt>
+                <dd>
+                  <CandidateValue value={previousFields[key]} />
+                </dd>
+              </div>
+              <div>
+                <dt>Proposed value</dt>
+                <dd>
+                  <CandidateValue value={proposedFields[key]} />
+                </dd>
+              </div>
+            </dl>
+          </div>
+        ))}
+    </section>
   );
 }
 export function EvidencePanel({
@@ -196,10 +290,8 @@ export function EvidencePanel({
               <strong>{displayLabel(String(n.attributes.code))}</strong>
               <p>{String(n.attributes.summary)}</p>
               <p>Field: {displayLabel(String(n.attributes.field_path))}</p>
-              {expectedValue[String(n.attributes.code)] && (
-                <p>
-                  Expected value: {expectedValue[String(n.attributes.code)]}
-                </p>
+              {n.attributes.expected_domain && (
+                <p>Expected value: {String(n.attributes.expected_domain)}</p>
               )}
               {n.attributes.tentative_cause && (
                 <p>Possible cause: {String(n.attributes.tentative_cause)}</p>
@@ -283,12 +375,20 @@ export function EvidencePanel({
                       ? "Current"
                       : "Historical"}
                   </strong>
-                  <p className="identifier">{n.id}</p>
-                  <p>
-                    {n.attributes.candidate_revision_id === candidateId
-                      ? "From this candidate"
-                      : "From a linked candidate"}
-                  </p>
+                  <CanonicalValues
+                    revision={n}
+                    nodes={nodes}
+                    proposed={candidate}
+                  />
+                  <details>
+                    <summary>Revision references</summary>
+                    <p className="identifier">{n.id}</p>
+                    <p>
+                      {n.attributes.candidate_revision_id === candidateId
+                        ? "From this candidate"
+                        : "From a linked candidate"}
+                    </p>
+                  </details>
                   <Value value={n.attributes.staged_at} />
                 </div>
               );

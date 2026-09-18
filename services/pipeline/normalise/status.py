@@ -44,3 +44,8 @@ def normalise_status(raw: str, field: FieldPath) -> NormalisedField[str]:
     if value != evidence.text:
         evidence.transform(TransformationCode.STATUS_MAPPING, evidence.text, value)
     return evidence.finish(FieldState.KNOWN, value)
+
+
+def supported_statuses(field_path: str) -> tuple[str, ...]:
+    """Exact accepted source tokens from the normaliser's registered mapping."""
+    return tuple(_STATUS.get(field_path, {}))

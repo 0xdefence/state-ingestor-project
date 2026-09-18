@@ -572,3 +572,29 @@ test("catalog failure preserves selected filenames and available scoped results"
   expect(table).toHaveTextContent(run.filename);
   expect(screen.getByText("Business identifier: SKU-2004")).toBeVisible();
 });
+
+test("an automatically promoted former dependency blocker is no longer outstanding review", async () => {
+  const original = workspace.review_items;
+  workspace.review_items = [
+    {
+      ...review,
+      readiness: "blocked_by_dependency",
+      current_readiness: "ready",
+      current_status: "promoted",
+      canonical_effect: "current",
+    },
+  ];
+  try {
+    renderWorkspace();
+    expect(
+      await screen.findByText("No outstanding review in this scope."),
+    ).toBeVisible();
+    expect(
+      within(
+        screen.getByRole("region", { name: "Outstanding review" }),
+      ).queryByText("Waiting for another record"),
+    ).not.toBeInTheDocument();
+  } finally {
+    workspace.review_items = original;
+  }
+});

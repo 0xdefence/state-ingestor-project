@@ -13,7 +13,9 @@ from sqlalchemy import select, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
+from services.application.dependency_readiness import dependencies_ready
 from services.application.errors import ResourceNotFoundError
+from services.application.evidence_domains import expected_domain
 from services.application.queries import (
     AllFilesScope,
     CurrentFileScope,
@@ -42,12 +44,19 @@ from services.domain.candidates import (
     OrderCandidate,
     ProductCandidate,
 )
-from services.domain.decisions import legal_outcomes
+from services.domain.decisions import DecisionOutcome, legal_outcomes
 from services.domain.fields import FieldState
 from services.domain.issues import Verdict
 from services.infrastructure.db import models as m
+from services.infrastructure.db.canonical_repository import (
+    SqlAlchemyCanonicalRepository,
+)
 from services.infrastructure.db.decision_repository import SqlAlchemyDecisionRepository
 from services.infrastructure.db.derived_codec import decode
+from services.infrastructure.db.derived_repositories import (
+    SqlAlchemyCandidateRepository,
+    SqlAlchemyClassificationRepository,
+)
 
 
 def freeze(value: object) -> Value:
@@ -218,6 +227,8 @@ class SqlAlchemyReadRepository:
                 and item.effective_state != query.effective_state
             ):
                 continue
+            if query.effective_state == "pending" and item.current_status == "promoted":
+                continue
             if query.verdict is not None and item.verdict != query.verdict:
                 continue
             items.append(item)
@@ -235,12 +246,28 @@ class SqlAlchemyReadRepository:
         latest = history[-1] if history else None
         state = latest.effective_state if latest else "pending"
         reasons = cast(tuple[object, ...], decode(review.reasons))
-        state_label = (
-            code_label("blocked_by_dependency")
-            if state == "pending"
-            and classification.readiness == "blocked_by_dependency"
-            and not legal_outcomes(Verdict(classification.verdict))
-            else code_label(state)
+        canonicals = SqlAlchemyCanonicalRepository(session)
+        classifications = SqlAlchemyClassificationRepository(session)
+        ready = dependencies_ready(
+            classifications.get(classification.id),
+            classifications,
+            SqlAlchemyCandidateRepository(session),
+            canonicals,
+        )
+        revision = canonicals.for_candidate(candidate.id)
+        canonical_effect = (
+            "current"
+            if revision and canonicals.current(revision.identity_id) == revision
+            else "historical"
+            if revision
+            else "not_promoted"
+        )
+        current_status = (
+            "promoted"
+            if canonical_effect == "current" and latest is None
+            else "blocked_by_dependency"
+            if not ready and state == "pending"
+            else state
         )
         return ReviewRowView(
             review.id,
@@ -255,12 +282,17 @@ class SqlAlchemyReadRepository:
             classification.readiness,
             code_label(classification.readiness),
             state,
-            state_label,
+            code_label(state),
             latest.sequence if latest else 0,
             latest.id if latest else None,
             raw.source_line_start,
             raw.source_line_end,
             tuple(str(getattr(r, "summary")) for r in reasons),
+            "ready" if ready else "blocked_by_dependency",
+            canonical_effect,
+            revision.id if revision else None,
+            current_status,
+            code_label(current_status),
         )
 
     def workspace(self, query: WorkspaceQuery) -> WorkspaceView:
@@ -269,14 +301,25 @@ class SqlAlchemyReadRepository:
                 self._run(session, r) for r in self._runs(session, query.scope)
             )
             queue = self._queue(session, ReviewQueueQuery(query.scope))
-            counts = Counter(item.effective_state for item in queue.items)
+            counts = Counter(
+                "promoted"
+                if item.current_status == "promoted"
+                else item.effective_state
+                for item in queue.items
+            )
             return WorkspaceView(
                 query.scope,
                 runs,
                 _object(
                     {
                         state: counts[state]
-                        for state in ("pending", "approved", "rejected", "acknowledged")
+                        for state in (
+                            "pending",
+                            "approved",
+                            "rejected",
+                            "acknowledged",
+                            "promoted",
+                        )
                     }
                 ),
                 queue.items,
@@ -412,6 +455,8 @@ class SqlAlchemyReadRepository:
             item = self._review_row(session, review, classification, candidate, raw)
             history = SqlAlchemyDecisionRepository(session).for_review(review.id)
             allowed = legal_outcomes(Verdict(classification.verdict))
+            if item.current_readiness == "blocked_by_dependency":
+                allowed = tuple(o for o in allowed if o is not DecisionOutcome.APPROVE)
             if history:
                 allowed = tuple(
                     outcome for outcome in allowed if outcome != history[-1].outcome
@@ -459,6 +504,13 @@ class SqlAlchemyReadRepository:
                 if isinstance(row, m.SourceOccurrenceModel)
                 else _attributes(row)
             )
+            if isinstance(row, m.DataQualityIssueModel):
+                attrs = ObjectView(
+                    (
+                        *attrs.fields,
+                        ("expected_domain", expected_domain(row.code, row.field_path)),
+                    )
+                )
             if isinstance(row, m.CanonicalIdentityModel):
                 current = session.get(m.CanonicalCurrentModel, identity)
                 attrs = ObjectView(

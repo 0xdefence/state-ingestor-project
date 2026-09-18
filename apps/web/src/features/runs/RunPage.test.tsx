@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, test, expect, vi } from "vitest";
 import axe from "axe-core";
 import {
+  detail,
   fakeWorkflow,
   renderWorkflow,
   runDetail,
@@ -167,4 +168,62 @@ test("canonical revision timestamp comes from the persisted staging instant", as
     "datetime",
     "2026-09-16T12:30:00Z",
   );
+});
+
+test("a cross-run review deep link never enables a decision in the wrong run context", async () => {
+  fakeWorkflow((url) =>
+    url === "/api/reviews/review-1"
+      ? Response.json({
+          ...detail,
+          item: { ...detail.item, run_id: "other-run" },
+        })
+      : undefined,
+  );
+  await renderWorkflow(`/runs/${run.id}?review=review-1`);
+  expect(
+    await screen.findByText(
+      "This review belongs to another file. Open its source run to inspect and decide.",
+    ),
+  ).toBeVisible();
+  expect(
+    screen.queryByRole("button", { name: "Approve" }),
+  ).not.toBeInTheDocument();
+  expect(
+    screen.getByRole("link", { name: "Open the matching run" }),
+  ).toHaveAttribute("href", "/runs/other-run?review=review-1");
+});
+test("switching between a clean record and a review keeps exactly one selected row", async () => {
+  fakeWorkflow();
+  const user = userEvent.setup();
+  const { router } = await renderWorkflow(`/runs/${run.id}`);
+  await user.click(
+    await screen.findByRole("button", { name: "Inspect line 10" }),
+  );
+  await user.click(screen.getByRole("button", { name: "Inspect line 9" }));
+  expect(router.state.location.search).not.toContain("record=");
+  expect(
+    screen.getByRole("button", { name: "Inspect line 10" }),
+  ).toHaveAttribute("aria-pressed", "false");
+  expect(
+    screen.getByRole("button", { name: "Inspect line 9" }),
+  ).toHaveAttribute("aria-pressed", "true");
+});
+test("duplicate submissions of an incomplete run do not claim processing was completed", async () => {
+  fakeWorkflow((url) =>
+    url.startsWith("/api/runs/")
+      ? Response.json({
+          ...runDetail,
+          run: { ...run, state: "ingested", processed_at: null, counts: {} },
+        })
+      : undefined,
+  );
+  await renderWorkflow(`/runs/${run.id}`);
+  expect(
+    await screen.findByText(
+      "These exact file contents were submitted more than once. The existing run was reused.",
+    ),
+  ).toBeVisible();
+  expect(
+    screen.queryByText(/Completed processing was reused/),
+  ).not.toBeInTheDocument();
 });

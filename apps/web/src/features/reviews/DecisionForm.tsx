@@ -57,7 +57,9 @@ export function DecisionForm({
     },
   });
   const outcomes = detail.allowed_outcomes.filter(
-    (o) => o !== "approve" || detail.item.readiness !== "blocked_by_dependency",
+    (o) =>
+      o !== "approve" ||
+      detail.item.current_readiness !== "blocked_by_dependency",
   );
   function submit(outcome: DecisionOutcome) {
     if (mutation.isPending || disabled) return;

@@ -72,6 +72,11 @@ class ReviewRowView:
     source_line_start: int
     source_line_end: int
     reason_summaries: tuple[str, ...]
+    current_readiness: str
+    canonical_effect: str
+    canonical_revision_id: UUID | None
+    current_status: str
+    current_status_label: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -119,4 +124,5 @@ def code_label(code: str) -> str:
         "blocked_by_dependency": "Waiting for another record",
         "staged": "Processed",
         "pending": "Awaiting review",
+        "promoted": "Promoted to canonical data",
     }.get(code, code.replace("_", " ").capitalize())

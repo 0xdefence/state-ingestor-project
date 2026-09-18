@@ -10,8 +10,8 @@ export function OccurrenceHistory({
       <h2>Submission history</h2>
       {occurrences.length > 1 && (
         <p>
-          These exact file contents were submitted more than once. Completed
-          processing was reused.
+          These exact file contents were submitted more than once. The existing
+          run was reused.
         </p>
       )}
       <details>

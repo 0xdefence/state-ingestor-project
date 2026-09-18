@@ -3,6 +3,7 @@
 from dataclasses import dataclass
 from uuid import UUID
 
+from services.application.dependency_readiness import dependencies_ready
 from services.application.errors import ApplicationValidationError
 from services.application.ports import Clock, UnitOfWork
 from services.domain.candidates import CandidateRevision
@@ -22,7 +23,7 @@ from services.domain.decisions import (
     validate_actor,
 )
 from services.domain.ids import new_id
-from services.domain.issues import ClassificationResult, Readiness, Verdict
+from services.domain.issues import Verdict
 from services.pipeline.rules.duplicates import business_key
 
 
@@ -81,35 +82,6 @@ def _matches(command: DecideReview, decision: ReviewDecision) -> bool:
     )
 
 
-def _dependencies_ready(result: ClassificationResult, uow: UnitOfWork) -> bool:
-    dependencies = uow.classifications.dependencies(result.id)
-    for dependency in dependencies:
-        target = dependency.target_candidate_revision_id
-        if target is None:
-            return False
-        canonical = uow.canonicals.for_candidate(target)
-        if canonical is None:
-            # Classification may point to a same-value reobservation candidate.
-            candidate = uow.candidates.get(target)
-            key = business_key(candidate.payload)
-            governed = uow.canonicals.get_key(*key) if key else None
-            if governed is None:
-                return False
-            current = uow.canonicals.current(governed.identity_id)
-            if current is None:
-                return False
-            from services.pipeline.rules.duplicates import same_typed_values
-
-            if not same_typed_values(
-                candidate.payload,
-                uow.candidates.get(current.candidate_revision_id).payload,
-            ):
-                return False
-        elif uow.canonicals.current(canonical.identity_id) != canonical:
-            return False
-    return bool(dependencies) or result.readiness is not Readiness.BLOCKED_BY_DEPENDENCY
-
-
 def _promote(
     candidate: CandidateRevision,
     decision_id: UUID | None,
@@ -166,7 +138,9 @@ def _unblock_dependants(uow: UnitOfWork, clock: Clock) -> None:
             ):
                 remaining.remove(result)
                 continue
-            if _dependencies_ready(result, uow):
+            if dependencies_ready(
+                result, uow.classifications, uow.candidates, uow.canonicals
+            ):
                 key = business_key(candidate.payload)
                 # A different canonical observation may have appeared since
                 # classification. Automatic unblocking cannot approve that conflict.
@@ -228,8 +202,8 @@ def decide_review(
             )
         if previous is not None and previous.outcome == command.outcome:
             raise IllegalDecisionError("A superseding decision must change the outcome")
-        if command.outcome is DecisionOutcome.APPROVE and not _dependencies_ready(
-            classification, uow
+        if command.outcome is DecisionOutcome.APPROVE and not dependencies_ready(
+            classification, uow.classifications, uow.candidates, uow.canonicals
         ):
             raise IllegalDecisionError("Approval is waiting for canonical dependencies")
         withdrawal = None

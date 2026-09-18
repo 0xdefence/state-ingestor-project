@@ -11,7 +11,10 @@ export function AttentionSummary({
   runs: RunView[];
   items: ReviewRow[];
 }) {
-  const pending = items.filter((item) => item.effective_state === "pending");
+  const pending = items.filter(
+    (item) =>
+      item.effective_state === "pending" && item.current_status !== "promoted",
+  );
   const failures = runs.filter((run) => run.stage_failure);
   const incomplete = runs.filter(
     (run) => run.state !== "staged" && !run.stage_failure,
@@ -64,13 +67,7 @@ export function AttentionSummary({
                   </span>
                 </p>
               </div>
-              <Status
-                value={
-                  item.readiness === "blocked_by_dependency"
-                    ? item.readiness
-                    : item.effective_state
-                }
-              />
+              <Status value={item.current_status} />
             </li>
           ))}
         </ul>
