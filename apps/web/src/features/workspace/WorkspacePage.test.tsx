@@ -486,3 +486,89 @@ test("completed and unfinished runs use processing evidence, never creation time
     within(table).queryByText("16 September 2026, 13:00 BST"),
   ).not.toBeInTheDocument();
 });
+
+test("an empty Selected-files visit can recover a failed catalog inside the picker", async () => {
+  const base = globalThis.fetch;
+  let catalogFails = true;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      if (String(input) === "/api/workspace?scope=all" && catalogFails)
+        return new Response(
+          JSON.stringify({
+            error: {
+              code: "internal_error",
+              message: "File catalog unavailable",
+              details: {},
+            },
+          }),
+          { status: 500 },
+        );
+      return base(input, init);
+    }),
+  );
+  renderWorkspace("/?scope=selected");
+  const user = userEvent.setup();
+  await user.click(screen.getByText("Choose files"));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "File catalog unavailable",
+  );
+  expect(screen.queryByText("No matching files.")).not.toBeInTheDocument();
+  expect(screen.getByText("0 selected files")).toBeVisible();
+  catalogFails = false;
+  await user.click(screen.getByRole("button", { name: "Retry loading files" }));
+  const option = await screen.findByRole("checkbox", { name: run.filename });
+  await user.click(option);
+  expect(await screen.findByRole("table")).toHaveTextContent(run.filename);
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+});
+test("a pending file catalog reports loading rather than an empty search", async () => {
+  const base = globalThis.fetch;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn((input: string | URL | Request, init?: RequestInit) =>
+      String(input) === "/api/workspace?scope=all"
+        ? new Promise<Response>(() => {})
+        : base(input, init),
+    ),
+  );
+  renderWorkspace("/?scope=selected");
+  const user = userEvent.setup();
+  await user.click(screen.getByText("Choose files"));
+  expect(screen.getByRole("status")).toHaveTextContent("Loading files");
+  expect(screen.queryByText("No matching files.")).not.toBeInTheDocument();
+});
+test("catalog failure preserves selected filenames and available scoped results", async () => {
+  const base = globalThis.fetch;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn((input: string | URL | Request, init?: RequestInit) =>
+      String(input) === "/api/workspace?scope=all"
+        ? Promise.resolve(
+            new Response(
+              JSON.stringify({
+                error: {
+                  code: "internal_error",
+                  message: "File catalog unavailable",
+                  details: {},
+                },
+              }),
+              { status: 500 },
+            ),
+          )
+        : base(input, init),
+    ),
+  );
+  renderWorkspace(`/?scope=selected&run_id=${run.id}`);
+  const table = await screen.findByRole("table");
+  const user = userEvent.setup();
+  await user.click(screen.getByText("Choose files"));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "File catalog unavailable",
+  );
+  expect(
+    screen.getByRole("button", { name: `Remove ${run.filename}` }),
+  ).toBeVisible();
+  expect(table).toHaveTextContent(run.filename);
+  expect(screen.getByText("Business identifier: SKU-2004")).toBeVisible();
+});

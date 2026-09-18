@@ -5,14 +5,28 @@ export function ScopeControl({
   scope,
   currentRunId,
   runs,
+  selectedRuns,
+  catalogStatus,
+  catalogError,
+  catalogFetching,
+  onRetryCatalog,
   onChange,
 }: {
   scope: FileScope;
   currentRunId: string | null;
   runs: RunView[];
+  selectedRuns: RunView[];
+  catalogStatus: "pending" | "error" | "success";
+  catalogError: Error | null;
+  catalogFetching: boolean;
+  onRetryCatalog: () => void;
   onChange: (scope: FileScope) => void;
 }) {
   const [search, setSearch] = useState("");
+  const filename = (id: string) =>
+    runs.find((run) => run.id === id)?.filename ??
+    selectedRuns.find((run) => run.id === id)?.filename ??
+    id;
   const remove = (id: string) =>
     onChange({
       ...scope,
@@ -51,10 +65,10 @@ export function ScopeControl({
                 type="button"
                 key={id}
                 className="file-chip"
-                aria-label={`Remove ${runs.find((run) => run.id === id)?.filename ?? id}`}
+                aria-label={`Remove ${filename(id)}`}
                 onClick={() => remove(id)}
               >
-                {runs.find((run) => run.id === id)?.filename ?? id}
+                {filename(id)}
                 <span>Remove</span>
               </button>
             ))}
@@ -69,6 +83,19 @@ export function ScopeControl({
                 onChange={(e) => setSearch(e.target.value)}
               />
             </label>
+            {catalogStatus === "pending" && <p role="status">Loading files…</p>}
+            {catalogStatus === "error" && (
+              <div role="alert" className="error-message">
+                <p>Files could not be loaded. {catalogError?.message}</p>
+                <button
+                  type="button"
+                  disabled={catalogFetching}
+                  onClick={onRetryCatalog}
+                >
+                  Retry loading files
+                </button>
+              </div>
+            )}
             <div className="file-options">
               {runs
                 .filter((run) =>
@@ -94,11 +121,12 @@ export function ScopeControl({
                   </label>
                 ))}
             </div>
-            {!runs.some((run) =>
-              (run.filename ?? run.id)
-                .toLowerCase()
-                .includes(search.toLowerCase()),
-            ) && <p>No matching files.</p>}
+            {catalogStatus === "success" &&
+              !runs.some((run) =>
+                (run.filename ?? run.id)
+                  .toLowerCase()
+                  .includes(search.toLowerCase()),
+              ) && <p>No matching files.</p>}
           </details>
         </section>
       )}

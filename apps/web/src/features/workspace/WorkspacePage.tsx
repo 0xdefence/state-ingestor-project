@@ -49,6 +49,13 @@ export function WorkspacePage() {
         scope={scope}
         currentRunId={currentRun.current}
         runs={catalog.data?.runs ?? []}
+        selectedRuns={runs}
+        catalogStatus={catalog.status}
+        catalogError={catalog.error}
+        catalogFetching={catalog.isFetching}
+        onRetryCatalog={() => {
+          void catalog.refetch();
+        }}
         onChange={(next) => setParams(scopeParams(next))}
       />
       {error ? (
