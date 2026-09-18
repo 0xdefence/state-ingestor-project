@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from services.application.ports import Clock, Repositories, SourceStore
 from services.application.process import UnitOfWorkFactory
+from services.application.read_ports import ReadRepository
 from services.infrastructure.db.canonical_repository import (
     SqlAlchemyCanonicalRepository,
 )
@@ -25,6 +26,7 @@ from services.infrastructure.db.derived_repositories import (
     SqlAlchemyReviewRepository,
 )
 from services.infrastructure.db.fx_repository import SqlAlchemyFxRepository
+from services.infrastructure.db.read_repository import SqlAlchemyReadRepository
 from services.infrastructure.db.repositories import (
     SqlAlchemyCheckpointRepository,
     SqlAlchemyEventRepository,
@@ -82,6 +84,7 @@ class Runtime:
     uow_factory: UnitOfWorkFactory
     source_store: SourceStore
     clock: Clock
+    read_repository: ReadRepository | None = None
 
 
 class RuntimeConfigurationError(Exception):
@@ -131,6 +134,7 @@ def build_runtime(
             uow_factory,
             FilesystemSourceStore(settings.source_root),
             clock if clock is not None else SystemClock(),
+            SqlAlchemyReadRepository(engine),
         )
     except NoResultFound as error:
         raise LookupError(

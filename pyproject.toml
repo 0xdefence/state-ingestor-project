@@ -8,6 +8,9 @@ dependencies = [
     "psycopg[binary]>=3.2,<4",
     "sqlalchemy>=2.0,<3",
     "typer>=0.16,<1",
+    "fastapi>=0.116,<1",
+    "python-multipart>=0.0.20,<1",
+    "uvicorn>=0.35,<1",
 ]
 
 [project.scripts]
@@ -37,6 +40,7 @@ typeCheckingMode = "strict"
 
 [dependency-groups]
 dev = [
+    "httpx>=0.28,<1",
     "pyright>=1.1.414",
     "pytest>=9.1.1",
     "ruff>=0.16.8",
