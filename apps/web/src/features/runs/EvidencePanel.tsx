@@ -84,12 +84,19 @@ export function TechnicalEvidence({ nodes }: { nodes: EvidenceNode[] }) {
 }
 function businessIdentity(candidate: EvidenceNode | undefined) {
   const payload = object(candidate?.attributes.payload);
-  for (const key of ["customer_id", "sku", "order_id"]) {
-    const field = object(payload[key]);
-    if (field.state === "known" && typeof field.value === "string")
-      return { key, value: field.value };
-  }
-  return null;
+  const entityType = candidate?.attributes.entity_type ?? payload.entity_type;
+  const identityFields: Record<string, string> = {
+    customer: "customer_id",
+    product: "sku",
+    order: "order_id",
+  };
+  const key =
+    typeof entityType === "string" ? identityFields[entityType] : undefined;
+  if (!key) return null;
+  const field = object(payload[key]);
+  return field.state === "known" && typeof field.value === "string"
+    ? { entityType, value: field.value }
+    : null;
 }
 function CandidateValue({ value }: { value: EvidenceValue | undefined }) {
   const field = object(value);
@@ -128,7 +135,7 @@ function CanonicalValues({
   const sameRecord =
     previousKey &&
     proposedKey &&
-    previousKey.key === proposedKey.key &&
+    previousKey.entityType === proposedKey.entityType &&
     previousKey.value === proposedKey.value;
   const previousFields = object(previous?.attributes.payload);
   const proposedFields = object(proposed?.attributes.payload);

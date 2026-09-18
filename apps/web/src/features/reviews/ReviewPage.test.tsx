@@ -1,5 +1,9 @@
-import { conflictDetail, statusDetail } from "../../test/workflowFixtures";
-import { screen, waitFor } from "@testing-library/react";
+import {
+  conflictDetail,
+  statusDetail,
+  orderConflictDetail,
+} from "../../test/workflowFixtures";
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, test, expect, vi } from "vitest";
 import axe from "axe-core";
@@ -499,4 +503,32 @@ test("a valid shareable state does not claim its filters were invalid", async ()
   expect(
     screen.queryByText("Some URL filters were invalid and have been adjusted."),
   ).not.toBeInTheDocument();
+});
+
+test("order conflict compares order identity despite a changed linked product SKU", async () => {
+  fakeWorkflow((url) =>
+    url === "/api/reviews/review-1"
+      ? Response.json(orderConflictDetail)
+      : undefined,
+  );
+  await renderWorkflow("/reviews?review=review-1");
+  const order = await screen.findByRole("region", {
+    name: "Current canonical values for ORD-3001",
+  });
+  expect(order).toHaveTextContent("SKU-old");
+  expect(order).toHaveTextContent("SKU-new");
+  expect(order).toHaveTextContent("shipped");
+  expect(order).toHaveTextContent("pending");
+  expect(order).toHaveTextContent("Quantity");
+  expect(within(order).getByText("1")).toBeVisible();
+  expect(within(order).getByText("2")).toBeVisible();
+  expect(order).not.toHaveTextContent("Linked product");
+  expect(order).not.toHaveTextContent("Stock quantity");
+  expect(
+    screen.queryByRole("region", {
+      name: "Current canonical values for SKU-new",
+    }),
+  ).not.toBeInTheDocument();
+  expect(screen.getByText("Linked record: SKU-new")).toBeVisible();
+  expect(screen.queryByText("Linked record: SKU-old")).not.toBeInTheDocument();
 });

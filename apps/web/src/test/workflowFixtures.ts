@@ -375,3 +375,108 @@ export const statusDetail = {
     ],
   },
 };
+
+export const orderConflictDetail = {
+  ...detail,
+  item: {
+    ...item,
+    entity_type: "order",
+    business_identifier: "ORD-3001",
+    reason_summaries: ["This order has different current values"],
+  },
+  evidence: {
+    nodes: [
+      {
+        kind: "raw_record",
+        id: "raw-1",
+        attributes: {
+          fields: ["ORDER", "ORD-3001", "SKU-new", "2"],
+          kind: "data",
+          source_line_start: 9,
+          source_line_end: 9,
+        },
+      },
+      {
+        kind: "candidate_revision",
+        id: "candidate-1",
+        attributes: {
+          entity_type: "order",
+          raw_record_id: "raw-1",
+          created_at: instant,
+          payload: {
+            entity_type: "order",
+            order_id: known("ORD-3001"),
+            sku: known("SKU-new"),
+            quantity: known(2),
+            status: known("pending"),
+          },
+        },
+      },
+      {
+        kind: "candidate_revision",
+        id: "prior-order",
+        attributes: {
+          entity_type: "order",
+          raw_record_id: "raw-old",
+          created_at: instant,
+          payload: {
+            entity_type: "order",
+            order_id: known("ORD-3001"),
+            sku: known("SKU-old"),
+            quantity: known(1),
+            status: known("shipped"),
+          },
+        },
+      },
+      {
+        kind: "canonical_identity",
+        id: "order-identity",
+        attributes: {
+          entity_type: "order",
+          current_revision_id: "order-current",
+        },
+      },
+      {
+        kind: "canonical_revision",
+        id: "order-current",
+        attributes: {
+          identity_id: "order-identity",
+          candidate_revision_id: "prior-order",
+          revision_number: 1,
+          staged_at: instant,
+        },
+      },
+      {
+        kind: "candidate_revision",
+        id: "linked-product",
+        attributes: {
+          entity_type: "product",
+          payload: {
+            entity_type: "product",
+            sku: known("SKU-new"),
+            name: known("Linked product"),
+            stock_qty: known(99),
+          },
+        },
+      },
+      {
+        kind: "canonical_identity",
+        id: "product-identity",
+        attributes: {
+          entity_type: "product",
+          current_revision_id: "product-current",
+        },
+      },
+      {
+        kind: "canonical_revision",
+        id: "product-current",
+        attributes: {
+          identity_id: "product-identity",
+          candidate_revision_id: "linked-product",
+          revision_number: 1,
+          staged_at: instant,
+        },
+      },
+    ],
+  },
+};
