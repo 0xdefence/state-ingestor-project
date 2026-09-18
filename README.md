@@ -46,7 +46,7 @@ Focused commands:
 (cd apps/web && bunx playwright test e2e/operator-flow.spec.ts)
 ```
 
-On 18 September 2026 the complete gate passed: **614 Python tests, 63 web tests, 1 browser acceptance test**, Ruff, strict Pyright, TypeScript, and production build. Browser acceptance uses the real API, migrations, filesystem source storage, and PostgreSQL. Its test-only API fixture injects a second-batch normalisation failure and inspects persisted rows; those fixture endpoints are absent from the normal application. It verifies same-run retry, source/interpretation comparison, keyboard decisions, canonical promotion and reversal, exact-byte re-upload, and unchanged pipeline/canonical rows after reuse. Axe checks the workspace, failure, processed run, approved/reversed detail, and duplicate run. Screenshots are written under `apps/web/test-results/`; failing tests also retain traces.
+On 18 September 2026 the complete gate passed: **615 Python tests, 63 web tests, 1 browser acceptance test**, Ruff, strict Pyright, TypeScript, and production build. Browser acceptance uses the real API, migrations, filesystem source storage, and PostgreSQL. Its test-only API fixture injects a second-batch normalisation failure and inspects persisted rows; those fixture endpoints are absent from the normal application. It verifies same-run retry, source/interpretation comparison, keyboard decisions, canonical promotion and reversal, exact-byte re-upload, and unchanged pipeline/canonical rows after reuse. Axe checks the workspace, failure, processed run, approved/reversed detail, and duplicate run. Screenshots are written under `apps/web/test-results/`; failing tests also retain traces.
 
 ## Scope and authority
 

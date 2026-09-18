@@ -19,7 +19,14 @@ url = make_url(
     )
 )
 name = "browser_test_" + uuid4().hex
-admin = create_engine(url, isolation_level="AUTOCOMMIT")
+admin = create_engine(
+    url,
+    isolation_level="AUTOCOMMIT",
+    connect_args={
+        "connect_timeout": 2,
+        "options": "-c statement_timeout=2000 -c lock_timeout=1000",
+    },
+)
 
 
 def stop(_signum: int, _frame: object) -> None:
@@ -40,19 +47,39 @@ try:
             "SOURCE_ROOT": source_root,
             "ALEXIS_API_APP": "tests.support.browser_api:create_app",
         }
-        child = subprocess.Popen(["./scripts/run-local.sh"], env=env)
+        # Own a separate group so termination covers the shell, API and Vite,
+        # without signalling this resource owner or Playwright itself.
+        child = subprocess.Popen(
+            ["./scripts/run-local.sh"], env=env, start_new_session=True
+        )
         try:
             raise SystemExit(child.wait())
         except KeyboardInterrupt:
             pass
         finally:
-            child.terminate()
+            # Playwright's outer deadline is 10s. Spend at most 3s on the
+            # process tree, reserving the remainder for source/database disposal.
+            signal.signal(signal.SIGTERM, signal.SIG_IGN)
+            signal.signal(signal.SIGINT, signal.SIG_IGN)
             try:
-                child.wait(timeout=10)
+                os.killpg(child.pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+            try:
+                child.wait(timeout=2)
             except subprocess.TimeoutExpired:
-                child.kill()
-                child.wait()
+                pass
+            finally:
+                # The shell can exit before a descendant, so stop the group
+                # even when waiting for the direct child returned successfully.
+                try:
+                    os.killpg(child.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                child.wait(timeout=1)
 finally:
-    with admin.connect() as connection:
-        connection.execute(text(f'DROP DATABASE "{name}" WITH (FORCE)'))
-    admin.dispose()
+    try:
+        with admin.connect() as connection:
+            connection.execute(text(f'DROP DATABASE "{name}" WITH (FORCE)'))
+    finally:
+        admin.dispose()
