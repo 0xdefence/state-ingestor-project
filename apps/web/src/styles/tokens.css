@@ -1,0 +1,21 @@
+:root {
+  font-family: "Geist Sans", sans-serif;
+  color: #171717;
+  background: #fafafa;
+  font-synthesis: none;
+  --surface: #fff;
+  --canvas: #fafafa;
+  --field: #f5f5f5;
+  --border: #e5e5e5;
+  --ink: #171717;
+  --muted: #666;
+  --green: #237a4b;
+  --amber: #946200;
+  --red: #c53030;
+  --purple: #7545a0;
+  --grey: #666;
+  --focus: #06c;
+  --radius-panel: 14px;
+  --radius-control: 8px;
+  --font-mono: "Geist Mono", monospace;
+}
