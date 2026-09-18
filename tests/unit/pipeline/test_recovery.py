@@ -315,6 +315,20 @@ class MemoryLoad:
                     append=self.local["events"].append,
                 )
                 self.canonicals = SimpleNamespace(
+                    lock_promotions=lambda: None,
+                    lock_key=lambda kind, value: self.local["keys"].get((kind, value)),
+                    get_identity=lambda identity: self.local["identities"][identity],
+                    next_revision_number=lambda identity: (
+                        1
+                        + max(
+                            (
+                                r.revision_number
+                                for r in self.local["revisions"].values()
+                                if r.identity_id == identity
+                            ),
+                            default=0,
+                        )
+                    ),
                     activate=self.activate,
                     reobservations=lambda _: (),
                     get_key=lambda kind, value: self.local["keys"].get((kind, value)),

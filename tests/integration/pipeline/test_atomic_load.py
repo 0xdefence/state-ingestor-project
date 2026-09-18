@@ -189,9 +189,17 @@ def test_dependency_links_reobserved_canonical_and_replays_immutable_facts(
 
 def test_governed_business_key_race_fails_closed(engine, tmp_path):
     from concurrent.futures import ThreadPoolExecutor
+    from dataclasses import replace
     from threading import Barrier
 
+    from sqlalchemy.orm import sessionmaker
+
     from services.application.load import stage_run
+    from services.infrastructure.db.canonical_repository import (
+        SqlAlchemyCanonicalRepository,
+    )
+    from services.infrastructure.db.uow import SqlAlchemyUnitOfWork
+    from services.infrastructure.runtime import _repositories
 
     first = prepared(engine, tmp_path / "first", PRODUCT)
     second = prepared(engine, tmp_path / "second", "\n" + PRODUCT)
@@ -199,13 +207,21 @@ def test_governed_business_key_race_fails_closed(engine, tmp_path):
         classify_run(run, default_registry(), uow_for(engine), FixedClock())
     barrier = Barrier(2)
 
-    def load(run):
-        def synchronize(number):
-            if number == 2:
-                barrier.wait(timeout=10)
+    class Canonicals(SqlAlchemyCanonicalRepository):
+        def lock_promotions(self):
+            barrier.wait(timeout=10)
+            super().lock_promotions()
 
+    def repositories(session):
+        return replace(_repositories(session), canonicals=Canonicals(session))
+
+    def load(run):
         try:
-            return stage_run(run, lambda: uow_for(engine), FixedClock(), synchronize)
+            return stage_run(
+                run,
+                lambda: SqlAlchemyUnitOfWork(sessionmaker(engine), repositories),
+                FixedClock(),
+            )
         except Exception as error:
             return error
 

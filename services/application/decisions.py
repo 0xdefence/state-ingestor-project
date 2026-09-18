@@ -164,7 +164,14 @@ def _unblock_dependants(uow: UnitOfWork, clock: Clock) -> None:
                 key = business_key(candidate.payload)
                 # A different canonical observation may have appeared since
                 # classification. Automatic unblocking cannot approve that conflict.
-                if key is None or uow.canonicals.lock_key(*key) is not None:
+                if key is None:
+                    remaining.remove(result)
+                    continue
+                governed = uow.canonicals.lock_key(*key)
+                if (
+                    governed is not None
+                    and uow.canonicals.current(governed.identity_id) is not None
+                ):
                     remaining.remove(result)
                     continue
                 _promote(candidate, None, uow, clock)
@@ -191,6 +198,9 @@ def decide_review(
                 else None
             )
             return DecisionResult(stored, revision, stored.effective_state, True)
+        # This must precede every canonical key/identity lock, including keys
+        # discovered later by the dependency cascade and approval reversals.
+        uow.canonicals.lock_promotions()
         item = uow.reviews.get_locked(command.review_item_id)
         classification = uow.classifications.get(item.classification_id)
         candidate = uow.candidates.terminal(item.raw_record_id)

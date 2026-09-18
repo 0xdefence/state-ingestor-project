@@ -270,6 +270,25 @@ class SqlAlchemyCanonicalRepository:
         ).one()
         return _revision(row)
 
+    def get_identity(self, identity_id: UUID) -> CanonicalIdentity:
+        row = self._session.scalars(
+            select(CanonicalIdentityModel).where(
+                CanonicalIdentityModel.id == identity_id
+            )
+        ).one()
+        return CanonicalIdentity(
+            row.id, row.entity_type, row.created_at.astimezone(UTC)
+        )
+
+    def lock_promotions(self) -> None:
+        # Cascades discover additional keys while running. Serialize the entire
+        # canonical transaction before taking any key, identity or cascade locks
+        # so another writer cannot hold a later key while awaiting our scan.
+        self._session.execute(
+            text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"),
+            {"key": "canonical-promotions"},
+        )
+
     def lock_key(self, key_type: str, value: str) -> CanonicalBusinessKey | None:
         # A transaction lock also covers absent keys, before identity creation.
         self._session.execute(

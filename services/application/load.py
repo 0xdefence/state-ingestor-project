@@ -127,9 +127,10 @@ def stage_run(
             if len(set(keys.values())) != len(keys):
                 raise ValueError("Eligible set has conflicting governed business keys")
         with uow_factory() as write:
-            # Run lock serializes identical staging attempts. Cross-run governed
-            # key races are rejected by the database's unique key constraint.
+            # Run lock serializes identical staging attempts. Canonical writers
+            # share one transaction lock before acquiring any keys/identities.
             attempt = write.events.next_attempt_number(run_id, "load")
+            write.canonicals.lock_promotions()
             current = write.runs.get(run_id)
             if current.state is RunState.STAGED:
                 for candidate in eligible:
@@ -138,22 +139,14 @@ def stage_run(
                         raise ValueError("Staged run is missing canonical evidence")
                     key = keys[candidate.id]
                     assert key is not None
-                    write.canonicals.add_identity(
-                        CanonicalIdentity(
-                            existing.identity_id, key[0], existing.staged_at
-                        )
-                    )
-                    write.canonicals.add_revision(
-                        CanonicalRevision(
-                            existing.id,
-                            existing.identity_id,
-                            candidate.id,
-                            1,
-                            existing.staged_at,
-                        )
-                    )
-                    if write.canonicals.get_key(*key) != CanonicalBusinessKey(
-                        existing.identity_id, key[0], key[1], existing.id
+                    identity = write.canonicals.get_identity(existing.identity_id)
+                    governed = write.canonicals.get_key(*key)
+                    # The immutable key points to the first accepted revision;
+                    # a reused identity may have been created in an earlier run.
+                    if (
+                        identity.entity_type != key[0]
+                        or governed is None
+                        or governed.identity_id != existing.identity_id
                     ):
                         raise ValueError("Canonical business key identity mismatch")
                 observed = {
@@ -207,22 +200,34 @@ def stage_run(
                 key = keys[candidate.id]
                 assert key is not None
                 staged_at = clock.now()
-                identity = CanonicalIdentity(new_id(), key[0], staged_at)
+                governed = write.canonicals.lock_key(*key)
+                if governed is None:
+                    identity = CanonicalIdentity(new_id(), key[0], staged_at)
+                    write.canonicals.add_identity(identity)
+                    identity_id = identity.id
+                    after_insert()
+                else:
+                    identity_id = governed.identity_id
+                    if write.canonicals.current(identity_id) is not None:
+                        raise ValueError("Canonical business key is already active")
                 revision = CanonicalRevision(
-                    new_id(), identity.id, candidate.id, 1, staged_at
+                    new_id(),
+                    identity_id,
+                    candidate.id,
+                    write.canonicals.next_revision_number(identity_id),
+                    staged_at,
                 )
-                write.canonicals.add_identity(identity)
-                after_insert()
                 write.canonicals.add_revision(revision)
                 after_insert()
-                write.canonicals.add_key(
-                    CanonicalBusinessKey(identity.id, key[0], key[1], revision.id)
-                )
-                after_insert()
+                if governed is None:
+                    write.canonicals.add_key(
+                        CanonicalBusinessKey(identity_id, key[0], key[1], revision.id)
+                    )
+                    after_insert()
                 write.canonicals.activate(
                     CanonicalPromotionEvent(
                         new_id(),
-                        identity.id,
+                        identity_id,
                         revision.id,
                         PromotionAction.ACTIVATE,
                         None,
@@ -230,7 +235,7 @@ def stage_run(
                         staged_at,
                     )
                 )
-                identities[candidate.id] = identity.id
+                identities[candidate.id] = identity_id
             for dependency in frozen[2]:
                 target = dependency.target_candidate_revision_id
                 if (
