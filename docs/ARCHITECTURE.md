@@ -654,7 +654,7 @@ The verified repository gate is:
 ./scripts/quality-gate.sh
 ```
 
-It runs all Python unit/integration tests, Ruff, strict Pyright, web component/accessibility tests, TypeScript, the production build, and the browser operator flow in a fixed order. On 18 September 2026 it passed with 615 Python tests, 63 web tests, and one Chromium acceptance test, with no unexpected warnings. The browser flow uses a freshly migrated disposable PostgreSQL database and real API/filesystem storage, injects one recoverable normalisation batch failure, proves retry, inspects source and interpreted evidence, approves and reverses a decision, and proves identical re-upload adds an occurrence without changing any pipeline/canonical rows.
+It runs all Python unit/integration tests, Ruff, strict Pyright, web component/accessibility tests, TypeScript, the production build, and the browser operator flow in a fixed order. On 18 September 2026 it passed with 623 Python tests, 68 web tests, and one Chromium acceptance test, with no unexpected warnings. The browser flow uses a freshly migrated disposable PostgreSQL database and real API/filesystem storage, injects one recoverable normalisation batch failure, proves retry, inspects source and interpreted evidence, approves and reverses a decision, and proves identical re-upload adds an occurrence without changing any pipeline/canonical rows.
 
 Focused commands remain available:
 
