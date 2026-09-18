@@ -1,0 +1,114 @@
+<style>
+  .m { font: 13px/1.45 system-ui, -apple-system, sans-serif; color:#171717; background:#fff; border:1px solid #e5e5e5; border-radius:12px; overflow:hidden; }
+  .m .hd { padding:12px 16px; border-bottom:1px solid #eaeaea; display:flex; justify-content:space-between; align-items:baseline; }
+  .m .hd b { font-size:14px; }
+  .m .muted { color:#6b6b6b; font-size:12px; }
+  .m .bd { padding:12px 16px; }
+  .m .ft { padding:10px 16px; border-top:1px solid #eaeaea; display:flex; justify-content:flex-end; gap:8px; background:#fafafa; }
+  .m .btn { border:1px solid #d4d4d4; border-radius:8px; padding:5px 12px; background:#fff; font-size:12px; }
+  .m .btn.p { background:#171717; color:#fff; border-color:#171717; }
+  .m .lbl { font-size:11px; text-transform:uppercase; letter-spacing:.04em; color:#6b6b6b; margin:10px 0 6px; }
+  .m .seg { display:flex; gap:6px; flex-wrap:wrap; }
+  .m .seg span { border:1px solid #d4d4d4; border-radius:999px; padding:3px 10px; font-size:12px; }
+  .m .seg span.on { border-color:#171717; background:#171717; color:#fff; }
+  .m .row { display:grid; grid-template-columns: 90px 1fr; gap:8px; align-items:center; padding:5px 0; border-bottom:1px dashed #eee; }
+  .m .row.ch { background:#f5f9ff; margin:0 -8px; padding:5px 8px; border-radius:6px; }
+  .m input { width:100%; box-sizing:border-box; border:1px solid #d4d4d4; border-radius:6px; padding:4px 7px; font-size:12px; background:#fafafa; }
+  .m .src { font-family: ui-monospace, monospace; font-size:11px; color:#6b6b6b; }
+  .m .ok { color:#0a7a3d; font-size:11px; } .m .warn { color:#a15c00; font-size:11px; } .m .err { color:#b42318; font-size:11px; }
+  .m .cite { border:1px solid #eaeaea; border-radius:8px; padding:6px 8px; margin:4px 0; font-size:12px; }
+  .m .res { border:1px solid #eaeaea; border-radius:8px; padding:8px 10px; background:#fafafa; font-size:12px; }
+  .two { display:grid; grid-template-columns: 1.4fr 1fr; }
+  .two > div + div { border-left:1px solid #eaeaea; background:#fcfcfc; }
+  table.cmp { width:100%; border-collapse:collapse; font-size:12px; }
+  table.cmp th { text-align:left; font-weight:500; color:#6b6b6b; font-size:11px; padding:4px 6px; border-bottom:1px solid #eaeaea; }
+  table.cmp td { padding:5px 6px; border-bottom:1px dashed #eee; vertical-align:top; }
+</style>
+
+<h2>Edit popup: which layout?</h2>
+<p class="subtitle">Same record in all three: product <b>SKU-2010</b> (source line 41) with category "Garden" flagged as outside the vocabulary. The operator chose <b>Business rule updated</b>. Click the layout you prefer.</p>
+
+<div class="cards">
+
+  <div class="card" data-choice="a" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="m">
+        <div class="hd"><b>Edit SKU-2010</b><span class="muted">Line 41 · version 1</span></div>
+        <div class="bd">
+          <div class="lbl">1 · Why are you editing?</div>
+          <div class="seg"><span>Data is wrong</span><span class="on">Business rule updated</span><span>Record links are wrong</span></div>
+          <div class="lbl">2 · Fields</div>
+          <div class="row"><span>Category</span><div><input value="Garden"><div class="src">Source: "Garden"</div></div></div>
+          <div class="row"><span>Stock</span><div><input value="0"><div class="src">Source: "0"</div></div></div>
+          <div class="row"><span>Status</span><div><input value="in_stock"><div class="src">Source: "in stock"</div></div></div>
+          <div class="lbl">3 · Which rule is outdated?</div>
+          <div class="cite">☑ Category vocabulary: accept <b>Garden</b> <span class="muted">· flagged on this record</span></div>
+          <div class="cite">☐ Stock/status consistency <span class="muted">· flagged on this record</span></div>
+          <div class="lbl">4 · Result preview</div>
+          <div class="res"><span class="warn">▲ Needs attention</span> · 1 issue remains: stock 0 conflicts with status in_stock</div>
+        </div>
+        <div class="ft"><span class="btn">Cancel</span><span class="btn p">Append edit</span></div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>A · Single column, numbered steps</h3>
+      <p>Reason, then fields, then rule citations, then the result preview, top to bottom. Simple and fully keyboard-linear, but on long records the preview is below the fold.</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="b" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="m">
+        <div class="hd"><b>Edit SKU-2010</b><span class="muted">Line 41 · version 1</span></div>
+        <div class="two">
+          <div class="bd">
+            <div class="lbl">Why are you editing?</div>
+            <div class="seg"><span>Data is wrong</span><span class="on">Business rule updated</span><span>Record links are wrong</span></div>
+            <div class="lbl">Fields</div>
+            <div class="row"><span>Category</span><div><input value="Garden"><div class="src">Source: "Garden"</div></div></div>
+            <div class="row ch"><span>Stock</span><div><input value="12"><div class="src">Source: "0" · <span class="ok">→ 12</span></div></div></div>
+            <div class="row"><span>Status</span><div><input value="in_stock"><div class="src">Source: "in stock"</div></div></div>
+          </div>
+          <div class="bd">
+            <div class="lbl">Outdated rule</div>
+            <div class="cite">☑ Category vocabulary<br>accept <b>Garden</b></div>
+            <div class="cite">☐ Stock/status consistency</div>
+            <div class="lbl">After append</div>
+            <div class="res"><span class="ok">● No issues remain</span><br><span class="muted">Still needs approval</span></div>
+            <div class="lbl">Record</div>
+            <div class="muted">Version 1 → 2 · edit #1</div>
+          </div>
+        </div>
+        <div class="ft"><span class="btn">Cancel</span><span class="btn p">Append edit</span></div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>B · Two panes: edit left, consequence right</h3>
+      <p>Fields on the left; citations and a live "after append" result always visible on the right. The outcome stays in view while typing. Needs a wider dialog and stacks to one column on narrow screens.</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="c" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="m">
+        <div class="hd"><b>Edit SKU-2010</b><span class="muted">Line 41 · version 1</span></div>
+        <div class="bd">
+          <div class="seg" style="margin-bottom:8px"><span>Data is wrong</span><span class="on">Business rule updated</span><span>Record links are wrong</span></div>
+          <table class="cmp">
+            <tr><th>Field</th><th>Source</th><th>Current</th><th>New value</th><th>Check</th></tr>
+            <tr><td>Category</td><td class="src">Garden</td><td>Garden</td><td><input value="Garden"></td><td class="warn">☑ accept</td></tr>
+            <tr><td>Stock</td><td class="src">0</td><td>0</td><td><input value="12"></td><td class="ok">✓</td></tr>
+            <tr><td>Status</td><td class="src">in stock</td><td>in_stock</td><td><input value="in_stock"></td><td class="ok">✓</td></tr>
+          </table>
+          <div class="res" style="margin-top:8px"><span class="ok">● No issues remain</span> · still needs approval</div>
+        </div>
+        <div class="ft"><span class="btn">Cancel</span><span class="btn p">Append edit</span></div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>C · Comparison table</h3>
+      <p>One row per field: source text, current value, new value, and the check or citation inline. The densest and most evidence-led layout, with source-vs-new side by side. Harder to fit on narrow screens.</p>
+    </div>
+  </div>
+
+</div>

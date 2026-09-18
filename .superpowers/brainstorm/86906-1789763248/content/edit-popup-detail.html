@@ -1,0 +1,117 @@
+<style>
+  .m { font: 13px/1.45 system-ui, -apple-system, sans-serif; color:#171717; background:#fff; border:1px solid #e5e5e5; border-radius:12px; overflow:hidden; margin-bottom:8px; }
+  .m .hd { padding:12px 16px; border-bottom:1px solid #eaeaea; display:flex; justify-content:space-between; align-items:baseline; gap:12px; }
+  .m .hd b { font-size:14px; }
+  .m .muted { color:#6b6b6b; font-size:12px; }
+  .m .bd { padding:12px 16px; }
+  .m .ft { padding:10px 16px; border-top:1px solid #eaeaea; display:flex; justify-content:space-between; align-items:center; gap:8px; background:#fafafa; }
+  .m .btn { border:1px solid #d4d4d4; border-radius:8px; padding:5px 12px; background:#fff; font-size:12px; }
+  .m .btn.p { background:#171717; color:#fff; border-color:#171717; }
+  .m .lbl { font-size:11px; text-transform:uppercase; letter-spacing:.04em; color:#6b6b6b; margin:12px 0 6px; }
+  .m .seg { display:flex; gap:6px; flex-wrap:wrap; }
+  .m .seg span { border:1px solid #d4d4d4; border-radius:999px; padding:3px 10px; font-size:12px; }
+  .m .seg span.on { border-color:#171717; background:#171717; color:#fff; }
+  .m .hint { font-size:12px; color:#6b6b6b; margin-top:6px; }
+  .m input, .m textarea { width:100%; box-sizing:border-box; border:1px solid #d4d4d4; border-radius:6px; padding:4px 7px; font-size:12px; background:#fafafa; font-family:inherit; }
+  .m .src { font-family: ui-monospace, monospace; font-size:11px; color:#525252; }
+  .ok { color:#0a7a3d; } .warn { color:#a15c00; } .err { color:#b42318; }
+  .m .res { border:1px solid #eaeaea; border-radius:8px; padding:8px 10px; background:#fafafa; font-size:12px; }
+  table.cmp { width:100%; border-collapse:collapse; font-size:12px; }
+  table.cmp th { text-align:left; font-weight:500; color:#6b6b6b; font-size:11px; padding:4px 6px; border-bottom:1px solid #eaeaea; }
+  table.cmp td { padding:6px; border-bottom:1px dashed #eee; vertical-align:top; }
+  table.cmp tr.ch td { background:#f5f9ff; }
+  .tiny { font-size:11px; }
+  .find { border:1px solid #eaeaea; border-radius:8px; padding:7px 9px; margin:5px 0; font-size:12px; display:flex; gap:8px; }
+  .hist { border-left:2px solid #e5e5e5; padding-left:12px; margin:8px 0 12px 4px; }
+  .hist .e { margin-bottom:12px; }
+  .tag { display:inline-block; border:1px solid #d4d4d4; border-radius:999px; padding:0 8px; font-size:11px; color:#404040; }
+  .tag.dim { color:#8a8a8a; border-style:dashed; }
+  .narrow { max-width: 340px; }
+  .fc { border:1px solid #eaeaea; border-radius:8px; padding:8px; margin:6px 0; }
+  .fc.ch { background:#f5f9ff; }
+  .grid2 { display:grid; grid-template-columns: 1.6fr 1fr; gap:16px; align-items:start; }
+  @media (max-width: 900px) { .grid2 { grid-template-columns: 1fr; } }
+</style>
+
+<h2>Layout C in detail</h2>
+<p class="subtitle">1) the popup with the "Record links are wrong" reason, 2) how appended edits appear on the record, 3) the table on a narrow screen. Tell me in the terminal what to change.</p>
+
+<div class="grid2">
+<div>
+<div class="label">1 · Popup: order ORD-3001, reason "Record links are wrong"</div>
+<div class="m">
+  <div class="hd"><div><b>Edit ORD-3001</b> <span class="muted">· sample.csv · line 27</span></div><span class="muted">Version 2 · pending</span></div>
+  <div class="bd">
+    <div class="lbl">Why are you editing?</div>
+    <div class="seg"><span>Data is wrong</span><span>Business rule updated</span><span class="on">Record links are wrong</span></div>
+    <div class="hint">Change a reference field to re-point a link, or mark a cross-record finding as wrong.</div>
+
+    <div class="lbl">Fields</div>
+    <table class="cmp">
+      <tr><th style="width:18%">Field</th><th style="width:18%">Source text</th><th style="width:20%">Current</th><th>New value</th></tr>
+      <tr><td>Order ID</td><td class="src">ORD-3001</td><td>ORD-3001</td><td><input value="ORD-3001"></td></tr>
+      <tr class="ch"><td>Customer</td><td class="src">S. Rossi</td><td>S. Rossi <span class="tiny warn">▲ no match</span></td><td><input value="Sofia Rossi"><div class="tiny ok">→ matches customer CUST-1003 (line 4)</div></td></tr>
+      <tr><td>SKU</td><td class="src">SKU-2004</td><td>SKU-2004</td><td><input value="SKU-2004"></td></tr>
+      <tr><td>Unit price</td><td class="src">$19.99</td><td>19.99 USD</td><td><input value="$19.99"></td></tr>
+      <tr><td>Ordered at</td><td class="src">03/04/2023</td><td>4 Mar 2023</td><td><input value="03/04/2023"></td></tr>
+      <tr><td>Notes</td><td class="src"><i>empty</i></td><td class="muted">Empty</td><td><input placeholder="Empty"> <span class="tiny muted">☐ Mark empty</span></td></tr>
+    </table>
+    <div class="tiny muted" style="margin-top:4px">Showing 6 of 9 fields · <u>Show all fields</u></div>
+
+    <div class="lbl">Cross-record findings on this version</div>
+    <div class="find"><span>☑</span><div><b>Duplicate of line 12</b> <span class="muted">· same source fields</span><div class="tiny muted">Mark as wrong: line 27 is a separate order that happens to repeat line 12.</div></div></div>
+    <div class="find"><span>☐</span><div><b>Business ID conflict with run "jan.csv"</b> <span class="muted">· ORD-3001 has different values</span></div></div>
+
+    <div class="lbl">After append</div>
+    <div class="res"><span class="ok">● No issues remain</span> · Needs approval · Customer link resolves to CUST-1003</div>
+
+    <div class="lbl">Operator and note</div>
+    <div style="display:grid;grid-template-columns:1fr 2fr;gap:8px"><input value="Alexis"><textarea rows="1">Two genuine orders placed the same day; confirmed with sales.</textarea></div>
+  </div>
+  <div class="ft"><span class="muted tiny">Appending adds version 3 and never changes earlier versions.</span><span><span class="btn">Cancel</span> <span class="btn p">Append edit</span></span></div>
+</div>
+
+<div class="label" style="margin-top:14px">Error state (worker failure, input kept)</div>
+<div class="m"><div class="bd"><div class="res" style="border-color:#f1c4c0;background:#fff7f6"><b class="err">Edit was not saved</b>: the re-check failed on the server. Nothing was changed. Your entries are kept.<br><span class="tiny muted">Code edit_recheck_failed · reference 7c1e…a94b</span><div style="margin-top:6px"><span class="btn">Retry append</span></div></div></div></div>
+</div>
+
+<div>
+<div class="label">2 · Record detail after two appends</div>
+<div class="m">
+  <div class="hd"><b>Edits</b><span class="muted">2 edits · current: edit #2</span></div>
+  <div class="bd">
+    <div class="hist">
+      <div class="e">
+        <div><b>Edit #2</b> <span class="tag">Current</span> <span class="tag">Record links are wrong</span></div>
+        <div class="muted">Alexis · 18 Sep 2026, 14:07:31 BST</div>
+        <div style="margin-top:4px">Customer: <span class="src">S. Rossi</span> → <b>Sofia Rossi</b></div>
+        <div>Dismissed: duplicate of line 12</div>
+        <div class="muted tiny">"Two genuine orders placed the same day."</div>
+        <div class="tiny src">Hash 3f9a0c…d21e · follows 81b2…07f</div>
+      </div>
+      <div class="e" style="opacity:.7">
+        <div><b>Edit #1</b> <span class="tag dim">Overridden by edit #2</span> <span class="tag">Data is wrong</span></div>
+        <div class="muted">Alexis · 18 Sep 2026, 13:52:09 BST</div>
+        <div style="margin-top:4px">Customer: <span class="src">S. Rossi</span> → <b>Sofia Rosi</b></div>
+        <div class="tiny src">Hash 81b2e4…07f · first edit</div>
+      </div>
+    </div>
+    <div class="lbl">Field evidence</div>
+    <table class="cmp">
+      <tr><th>Field</th><th>Value</th><th>Set by</th></tr>
+      <tr><td>Customer</td><td>Sofia Rossi</td><td><span class="tag">✎ Edit #2 · Alexis</span></td></tr>
+      <tr><td>SKU</td><td>SKU-2004</td><td class="muted">Source line 27</td></tr>
+    </table>
+  </div>
+</div>
+
+<div class="label" style="margin-top:14px">3 · Narrow screen: rows become field cards</div>
+<div class="m narrow">
+  <div class="hd"><b>Edit ORD-3001</b><span class="muted">v2</span></div>
+  <div class="bd">
+    <div class="fc ch"><b>Customer</b><div class="tiny muted">Source <span class="src">S. Rossi</span> · Current: no match</div><input value="Sofia Rossi" style="margin-top:4px"><div class="tiny ok">→ matches CUST-1003</div></div>
+    <div class="fc"><b>SKU</b><div class="tiny muted">Source <span class="src">SKU-2004</span></div><input value="SKU-2004" style="margin-top:4px"></div>
+  </div>
+</div>
+</div>
+</div>
